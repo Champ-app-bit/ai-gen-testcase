@@ -1,0 +1,36 @@
+# โปรเจกต์ WNW — เว็บสั่งพวงหรีดออนไลน์ (หรีด ณ วัด / Wreath Na Wat)
+name: WNW
+domain: "เว็บ e-commerce สั่งพวงหรีดออนไลน์ (หรีด ณ วัด / Wreath Na Wat) — frontend Next.js, มี backend แยก"
+lang: th
+tc_prefix: TC
+
+# repo ที่จะ clone มา ground (auth ผ่าน env AZURE_DEVOPS_PAT — ไม่ฝัง PAT ใน url)
+# branch: null = ใช้ default branch ของ repo
+repos:
+  - name: frontend
+    url: https://dev.azure.com/app-bit/WNW/_git/frontend
+    branch: null
+    framework: "Next.js / React (TypeScript)"
+  - name: backend
+    url: https://dev.azure.com/app-bit/WNW/_git/backend
+    branch: null
+    framework: "backend (business rules / API)"
+
+# นามสกุลไฟล์ที่อ่าน
+include_ext: [.ts, .tsx, .js, .jsx, .py, .php, .go, .java, .vue]
+
+# โฟลเดอร์/ไฟล์ที่ข้าม (กัน node_modules, build, และความลับ)
+ignore_dirs: [node_modules, .git, .next, dist, build, out, coverage, vendor,
+              __pycache__, .turbo, .cache, public, assets, storybook-static, .vercel]
+ignore_globs: ["*.env*", "*.lock", "*.min.*", "*.map", "*.snap",
+               "*.test.*", "*.spec.*", "*.d.ts", "*.config.js"]
+
+# โฟลเดอร์ที่ให้คะแนนพิเศษ (โค้ดที่มักมีกติกาให้ทดสอบ)
+signal_dirs: [app, pages, components, features, checkout, cart, coupon, promo, promotion,
+              payment, order, orders, auth, login, register, tracking, product, products,
+              validation, validators, schema, schemas, dto, service, services, api,
+              hooks, store, controllers, models, rules]
+
+# งบในการป้อนโค้ดให้ AI (คุมต้นทุน token)
+max_files: 25
+max_total_chars: 120000
