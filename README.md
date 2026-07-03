@@ -7,7 +7,28 @@
 (EP / BVA / Decision Table / State Transition / Pairwise) **พร้อมอ้างอิง source จากโค้ด**
 
 > ผลลัพธ์เป็น **ร่าง** ไว้ให้คนรีวิวก่อนนำไปเขียนเป็นเทสจริง (human-in-the-loop)
-> ใช้กับเว็บไหนก็ได้ — แค่เพิ่ม `projects/<name>.yaml`
+> ใช้กับเว็บไหนก็ได้
+
+## 2 วิธีใช้งาน
+
+### วิธี A (แนะนำ) — Claude Code + Claude Pro ✨ ไม่เปลือง API
+ใช้ slash command `/gen-testcases` — Claude อ่านโค้ดใน repo ปัจจุบันเอง (agentic) แล้วออกเทสเคส
+โดยใช้โควตา **Claude Pro/Max ของคุณ ไม่คิดเงินต่อ token** เหมาะกับงาน on-demand ที่คนนั่งรันเอง
+
+```bash
+# ติดตั้งครั้งเดียว (global — ใช้ได้ทุก repo)
+cp commands/gen-testcases.md ~/.claude/commands/
+
+# ใช้งาน: เข้า repo เว็บไหนก็ได้ แล้วเปิด Claude Code
+cd <repo เว็บที่จะทดสอบ>
+claude
+# ในหน้าต่าง claude พิมพ์:
+/gen-testcases ระบบใส่คูปองส่วนลด ยอดขั้นต่ำ 500 บาท ใช้ได้ครั้งเดียวต่อคน
+```
+Claude จะ grep/อ่านโค้ดที่เกี่ยว → สรุปกติกา → เขียนเทสเคสลง `docs/generated/` พร้อมอ้าง `file:line`
+
+### วิธี B — สคริปต์ Python + Gemini API (automation / clone จาก Azure)
+เหมาะเมื่อต้องการดึง repo จาก git remote อัตโนมัติ หรือรันแบบไม่โต้ตอบ — ดูรายละเอียดด้านล่าง
 
 ## ทำไมต้อง ground ด้วยโค้ดจริง
 AI อ่านโค้ดแล้วเจอกติกาที่คนมักคิดเทสไม่ครบ: ค่า validation จริง (`min=500` → ทดสอบ 499/500/501),
