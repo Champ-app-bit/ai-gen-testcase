@@ -16,6 +16,40 @@ repos:
     branch: null
     framework: "backend (business rules / API)"
 
+# (optional) RAG เอกสาร spec/requirement — ground คู่กับโค้ด (dual grounding)
+# path: โฟลเดอร์ในเครื่องที่เก็บ requirement (PDF/md/txt); comment ออก = ปิด ใช้เฉพาะโค้ด
+docs:
+  path: ./docs/wnw          # วาง requirement ไว้ที่นี่ (relative กับโฟลเดอร์โปรเจกต์)
+  ext: [.pdf, .md, .txt]
+
+# ─────────────────────────────────────────────────────────────────────
+# 3-way grounding สำหรับ "วิธี A" (/gen-testcases บน Claude Code — ไม่เรียก API)
+# ⚠️ path จริงของ repo ในเครื่อง อยู่ใน projects/wnw.local.yaml (สร้างโดย /setup wnw)
+#    ไฟล์นี้เก็บแค่ส่วน "portable" (remote URL + area mapping) เพื่อ commit ได้
+# ─────────────────────────────────────────────────────────────────────
+
+# git remote ของ repo ที่เกี่ยว (ไว้ให้ /setup เสนอ clone ถ้าเครื่องยังไม่มี)
+remotes:
+  code:
+    - https://dev.azure.com/app-bit/WNW/_git/frontend
+    - https://dev.azure.com/app-bit/WNW/_git/backend
+  automation: https://dev.azure.com/app-bit/WNW/_git/automation_wnw_robot   # ปรับตามจริง
+
+# เทสที่ automate แล้ว — convention + area mapping (portable, ไม่มี path เครื่อง)
+automation:
+  framework: robot
+  # convention repo (ให้เคสใหม่ทำตามนี้):
+  #   1 เคส/ไฟล์ · ชื่อ TC-<AREA>-<NN>_<slug>.robot · จัดใต้ tests/<feature>/<subfeature>/
+  #   Tags: feature:<x> group:<y> [type:<z>] + TC-ID · Documentation มี "Evidence: file:line"
+  areas:                                    # map ฟีเจอร์ → โฟลเดอร์ + prefix (ช่วยหา/ตั้งเลขต่อ)
+    register: { dir: auth/register, prefix: TC-REG }
+    login:    { dir: auth/login,    prefix: TC-LOGIN }
+    forget:   { dir: auth/forget,   prefix: TC-FGT }
+    checkout: { dir: checkout,      prefix: TC-CHK }
+    cart:     { dir: cart,          prefix: TC-CART }
+    payment:  { dir: payment,       prefix: TC-PAY }
+    tracking: { dir: tracking,      prefix: TC-TRK }
+
 # นามสกุลไฟล์ที่อ่าน
 include_ext: [.ts, .tsx, .js, .jsx, .py, .php, .go, .java, .vue]
 

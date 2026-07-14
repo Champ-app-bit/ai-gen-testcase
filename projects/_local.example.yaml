@@ -1,0 +1,19 @@
+# ตัวอย่าง <project>.local.yaml — /setup จะสร้างไฟล์จริงให้ (ชื่อตรงกับ project เช่น wnw.local.yaml)
+# ไฟล์นี้บอก path จริงของ repo บนเครื่องนี้ เพื่อ override ส่วน portable ใน <project>.yaml
+sources:
+  code:                 # โฟลเดอร์โค้ด product (อ่านหากติกาที่ทดสอบได้) — ระบุได้หลายอัน
+    - /ABSOLUTE/PATH/TO/frontend
+    - /ABSOLUTE/PATH/TO/backend
+  specs:                # (optional) โฟลเดอร์เอกสาร requirement/QA
+    - /ABSOLUTE/PATH/TO/specs
+automation:
+  path: /ABSOLUTE/PATH/TO/automation-repo/tests   # โฟลเดอร์ tests ของ repo automate
+output:
+  dir: /ABSOLUTE/PATH/TO/automation-repo/docs/generated   # ที่เก็บไฟล์เทสเคสที่ generate (แยกจาก spec)
+behavior_spec:                                            # (optional) ใช้กับ /gen-behavior-spec
+  draft_dir: /ABSOLUTE/PATH/TO/automation-repo/docs/behavior-spec/draft         # ร่างที่ยังไม่ยืนยัน — /gen-testcases ห้ามอ่าน
+  confirmed_dir: /ABSOLUTE/PATH/TO/automation-repo/docs/behavior-spec/confirmed # ยืนยันแล้ว — นับเป็น spec (ground #2)
+# heuristics:                                             # (optional) คลัง QA เพิ่มเฉพาะโปรเจกต์นี้ (นอกเหนือจาก references/*.md ที่มากับเครื่องมือ)
+#   extra: /ABSOLUTE/PATH/TO/project-qa-heuristics.md     # เว้นไว้ = ใช้แค่ references/ กลาง (แนะนำสำหรับส่วนใหญ่)
+graph:
+  path: /ABSOLUTE/PATH/TO/automation-repo/graphify-out/graph.json   # (optional) Graphify code map, gitignored

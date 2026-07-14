@@ -4,3 +4,7 @@ output/
 .env
 .venv/
 venv/
+# path เฉพาะเครื่อง (สร้างโดย /setup) — ไม่ commit เพราะแต่ละเครื่อง path ต่างกัน
+projects/*.local.yaml
+# Graphify knowledge graph cache — rebuildable, ไม่ commit
+graphify-out/

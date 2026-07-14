@@ -1,0 +1,30 @@
+# โปรเจกต์ ERP — ระบบ ERP ภายใน (app-bit)
+name: ERP
+domain: "ระบบ ERP ภายในองค์กร (app-bit) — frontend Vue 2, backend Express (Node.js)"
+lang: th
+tc_prefix: TC
+
+# git remote (URL สะอาด — ไม่ฝัง PAT; auth ผ่าน credential helper/PAT ตอน clone)
+remotes:
+  code:
+    - https://dev.azure.com/app-bit/REPOS/_git/erp-frontend-2026
+    - https://dev.azure.com/app-bit/REPOS/_git/erp-api-2025
+
+# ⚠️ ERP ยังไม่มี automation repo + ไม่มี spec docs → gen แบบ code-only
+#    (ยังไม่มี automation.areas / sources.specs) — ถ้ามีในอนาคตค่อยเพิ่ม
+# automation:
+#   framework: <robot|playwright|...>
+#   areas: { ... }
+
+# Vue 2 (.vue) + Express (.js) — ปรับให้เข้ากับ ERP
+include_ext: [.vue, .js, .ts, .jsx, .tsx]
+ignore_dirs: [node_modules, .git, dist, build, out, vendor, __pycache__, .cache,
+              public, assets, coverage, files, storage]
+ignore_globs: ["*.env*", "*.lock", "*.min.*", "*.map", "*.log", "*.spec.*", "*.test.*"]
+
+# โฟลเดอร์ที่มักมีกติกาให้ทดสอบ (โครง ERP: apps/modules/services/views)
+signal_dirs: [apps, modules, views, components, services, routes, middleware,
+              controllers, models, validation, validators, schema, schemas, dto, rules, api, store]
+
+max_files: 25
+max_total_chars: 120000
