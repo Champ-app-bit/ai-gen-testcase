@@ -22,10 +22,17 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 PROJECTS_DIR = os.path.join(HERE, "projects")
 CACHE_DIR = os.environ.get("TESTGEN_CACHE", os.path.expanduser("~/.cache/ai-gen-testcase"))
-GEN_MODEL = os.environ.get("AI_MODEL", "gemini-2.5-pro")        # โหมดอ่านโค้ด: ใช้รุ่นฉลาด
-TERMS_MODEL = os.environ.get("AI_TERMS_MODEL", "gemini-2.5-flash")
+GEN_MODEL = os.environ.get("AI_MODEL", "gemini/gemini-2.5-pro")        # โหมดอ่านโค้ด: ใช้รุ่นฉลาด
+TERMS_MODEL = os.environ.get("AI_TERMS_MODEL", "gemini/gemini-2.5-flash")
+EMBED_MODEL = os.environ.get("AI_EMBED_MODEL", "gemini/text-embedding-004")  # RAG: embed เอกสาร spec
+
+# env ที่ litellm ใช้เลือกผู้ให้บริการ (ต้องมีอย่างน้อย 1 ตัวตรงกับ AI_MODEL)
+API_KEY_ENVS = ["GEMINI_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY",
+                "GROQ_API_KEY", "MISTRAL_API_KEY", "OPENROUTER_API_KEY"]
 PER_FILE_CHARS = 8000          # ตัดเนื้อไฟล์ต่อไฟล์ กันยาวเกิน
 MAX_FILE_BYTES = 200_000       # ข้ามไฟล์ใหญ่ผิดปกติ (มัก generated/minified)
+DOC_CHUNK_CHARS = 1000         # ขนาด chunk เอกสาร (prose) สำหรับ RAG
+DOC_CHUNK_OVERLAP = 150        # overlap กัน context ขาดรอยต่อ
 
 
 # ---------------------------------------------------------------- config
@@ -47,6 +54,7 @@ def load_project(name):
     cfg.setdefault("tc_prefix", "TC")
     cfg.setdefault("lang", "th")
     cfg.setdefault("domain", "")
+    cfg.setdefault("docs", {})          # RAG เอกสาร spec (ว่าง = ปิด, ทำงานเหมือนเดิม)
     return cfg
 
 
@@ -150,29 +158,148 @@ def select_files(repo_roots, terms, cfg, scope=None):
     return picked
 
 
+# ---------------------------------------------------------------- docs (RAG)
+def _read_doc(path):
+    """อ่านเนื้อเอกสารเป็น text (รองรับ .pdf / .md / .txt); คืน '' ถ้าอ่านไม่ได้"""
+    ext = os.path.splitext(path)[1].lower()
+    try:
+        if ext == ".pdf":
+            from pypdf import PdfReader
+            return "\n".join((pg.extract_text() or "") for pg in PdfReader(path).pages)
+        with open(path, encoding="utf-8", errors="ignore") as f:
+            return f.read()
+    except Exception as e:  # noqa: BLE001
+        print(f"หมายเหตุ: อ่านเอกสารไม่ได้ {os.path.basename(path)} ({type(e).__name__})", file=sys.stderr)
+        return ""
+
+
+def _chunk(text, size, overlap):
+    """หั่น prose เป็น chunk มี overlap (กันกติกาขาดรอยต่อ)"""
+    text = text.strip()
+    out, i = [], 0
+    while i < len(text):
+        out.append(text[i:i + size])
+        i += max(1, size - overlap)
+    return [c for c in out if c.strip()]
+
+
+def _doc_files(docs_cfg):
+    """ไล่หาไฟล์เอกสารใต้ path ที่ config ไว้ (docs.path)"""
+    path = (docs_cfg or {}).get("path")
+    if not path:
+        return []
+    path = os.path.expanduser(path)
+    if not os.path.isabs(path):
+        path = os.path.join(HERE, path)
+    exts = tuple((docs_cfg.get("ext") or [".pdf", ".md", ".txt"]))
+    if os.path.isfile(path):
+        return [path] if path.lower().endswith(exts) else []
+    found = []
+    for dp, _, fns in os.walk(path):
+        for fn in fns:
+            if fn.lower().endswith(exts):
+                found.append(os.path.join(dp, fn))
+    return sorted(found)
+
+
+def _embed(texts):
+    """embed หลายข้อความผ่าน litellm -> list[vector]"""
+    import litellm
+    litellm.suppress_debug_info = True
+    resp = litellm.embedding(model=_norm_model(EMBED_MODEL), input=texts)
+    return [d["embedding"] for d in resp.data]
+
+
+def retrieve_docs(feature, cfg, project, top_k=6, refresh=False):
+    """RAG: อ่าน spec ในเครื่อง -> embed (cache ใน chroma) -> ดึง chunk ที่เกี่ยวกับ feature
+    คืน [(source, chunk)]; ถ้าไม่ได้ตั้ง docs หรือ lib ไม่พร้อม -> [] (พฤติกรรมเดิม)"""
+    files = _doc_files(cfg.get("docs"))
+    if not files:
+        return []
+    try:
+        import chromadb
+    except ImportError:
+        print("หมายเหตุ: ไม่ได้ติดตั้ง chromadb — ข้าม RAG เอกสาร (pip install chromadb pypdf)", file=sys.stderr)
+        return []
+
+    client = chromadb.PersistentClient(path=os.path.join(CACHE_DIR, project, "_docvec"))
+    col = client.get_or_create_collection("docs", metadata={"hnsw:space": "cosine"})
+    if refresh:
+        client.delete_collection("docs")
+        col = client.get_or_create_collection("docs", metadata={"hnsw:space": "cosine"})
+
+    # index เฉพาะ chunk ที่ยังไม่มี (id = hash ของเนื้อ -> ไม่ embed ซ้ำ, ประหยัด)
+    import hashlib
+    pending_ids, pending_txt, pending_meta = [], [], []
+    have = set(col.get()["ids"]) if col.count() else set()
+    root = os.path.expanduser((cfg.get("docs") or {}).get("path") or "")
+    for fp in files:
+        src = os.path.relpath(fp, root) if os.path.isdir(root) else os.path.basename(fp)
+        for idx, ch in enumerate(_chunk(_read_doc(fp), DOC_CHUNK_CHARS, DOC_CHUNK_OVERLAP)):
+            cid = hashlib.sha1(f"{src}:{idx}:{ch}".encode()).hexdigest()[:16]
+            if cid in have or cid in pending_ids:
+                continue
+            pending_ids.append(cid); pending_txt.append(ch); pending_meta.append({"source": src})
+    if pending_txt:
+        print(f"• embed เอกสาร {len(pending_txt)} chunk …", file=sys.stderr)
+        for i in range(0, len(pending_txt), 100):   # batch กัน payload ใหญ่
+            sl = slice(i, i + 100)
+            col.add(ids=pending_ids[sl], documents=pending_txt[sl],
+                    embeddings=_embed(pending_txt[sl]), metadatas=pending_meta[sl])
+
+    if not col.count():
+        return []
+    q = col.query(query_embeddings=_embed([feature]),
+                  n_results=min(top_k, col.count()),
+                  include=["documents", "metadatas"])
+    docs = q.get("documents", [[]])[0]
+    metas = q.get("metadatas", [[]])[0]
+    return [(m.get("source", "spec"), d) for d, m in zip(docs, metas)]
+
+
 # ---------------------------------------------------------------- AI
-def _client():
-    from google import genai
-    return genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+def has_api_key():
+    """มี key ของผู้ให้บริการ AI สักเจ้าไหม (litellm เลือกเจ้าจากชื่อ model + env)"""
+    return any(os.environ.get(k) for k in API_KEY_ENVS)
+
+
+def _norm_model(m):
+    """litellm ต้องการ provider prefix; ชื่อ gemini เดิม (ไม่มี '/') เติมให้ backward-compatible"""
+    if "/" not in m and m.startswith("gemini"):
+        return f"gemini/{m}"
+    return m
+
+
+def _complete(model, system, user, temperature, max_tokens):
+    """เรียก AI ผ่าน litellm (รองรับหลายเจ้า) — บังคับ output เป็น JSON, คืน string"""
+    import litellm
+    litellm.suppress_debug_info = True
+    litellm.drop_params = True   # ตัด param ที่บางเจ้าไม่รองรับ (เช่น response_format) แทนที่จะ error
+    resp = litellm.completion(
+        model=_norm_model(model),
+        messages=[{"role": "system", "content": system},
+                  {"role": "user", "content": user}],
+        temperature=temperature,
+        max_tokens=max_tokens,
+        response_format={"type": "json_object"},
+    )
+    return resp.choices[0].message.content or "{}"
 
 
 def extract_terms(feature, cfg, extra):
     """แปลงฟีเจอร์ (ไทย) เป็นคำค้นภาษาอังกฤษที่น่าจะอยู่ใน codebase"""
     terms = [t.strip() for t in (extra or "").split(",") if t.strip()]
     try:
-        from google.genai import types
         fw = ", ".join(r.get("framework") or "" for r in cfg.get("repos", []))
-        resp = _client().models.generate_content(
-            model=TERMS_MODEL,
-            contents=(f"ฟีเจอร์: {feature}\nโค้ดเบสเป็น: {fw}\n"
-                      "ให้คำค้น (identifier/ชื่อไฟล์/route/ตัวแปร/business term) ภาษาอังกฤษ "
-                      "ที่น่าจะปรากฏใน codebase นี้ 8-15 คำ สำหรับใช้ grep หาโค้ดที่เกี่ยว"),
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                system_instruction='ตอบเป็น JSON: {"terms":["...","..."]} เท่านั้น',
-                temperature=0.2, max_output_tokens=1024),
+        text = _complete(
+            TERMS_MODEL,
+            system='ตอบเป็น JSON: {"terms":["...","..."]} เท่านั้น',
+            user=(f"ฟีเจอร์: {feature}\nโค้ดเบสเป็น: {fw}\n"
+                  "ให้คำค้น (identifier/ชื่อไฟล์/route/ตัวแปร/business term) ภาษาอังกฤษ "
+                  "ที่น่าจะปรากฏใน codebase นี้ 8-15 คำ สำหรับใช้ grep หาโค้ดที่เกี่ยว"),
+            temperature=0.2, max_tokens=1024,
         )
-        data = json.loads(resp.text or "{}")
+        data = json.loads(text)
         terms += [t for t in data.get("terms", []) if isinstance(t, str)]
     except Exception as e:  # noqa: BLE001
         print(f"หมายเหตุ: ดึงคำค้นด้วย AI ไม่สำเร็จ ({type(e).__name__}) — ใช้เฉพาะ --keywords", file=sys.stderr)
@@ -187,37 +314,39 @@ def extract_terms(feature, cfg, extra):
 
 
 SYS_GEN = (
-    "คุณเป็น Senior QA Engineer ออกแบบเทสเคสจาก 'โค้ดจริง' ของระบบ. "
+    "คุณเป็น Senior QA Engineer ออกแบบเทสเคสจาก 'โค้ดจริง' + 'สเปก/requirement' ของระบบ. "
     "ขั้นแรกอ่านโค้ดที่ให้มาเพื่อหา 'กติกาที่ทดสอบได้' — validation (min/max/required/regex), "
     "business rule, สถานะ, enum/constant, ข้อความ error. "
+    "ถ้ามีสเปกให้มาด้วย: เทียบสเปกกับโค้ด แล้วหา 'ช่องว่าง' — "
+    "กติกาในสเปกที่โค้ดยังไม่ทำ (เขียนเทส + mark เป็น risk), "
+    "หรือโค้ดทำต่างจาก/เกินสเปก. ช่องว่างพวกนี้คือเทสเคสที่มีค่าที่สุด. "
     "จากนั้นออกแบบเทสเคสให้ครอบคลุมด้วยเทคนิค: EP, BVA (ค่าขอบจากค่าจริงในโค้ด), "
     "Decision Table, State Transition, Pairwise. ต้องมีทั้ง positive/negative/boundary. "
-    "ยึดค่าจริงจากโค้ด (เช่นเจอ min=500 ให้ทดสอบ 499/500/501). ห้ามแต่งกติกาที่โค้ดไม่มี. "
-    "expected result ต้องตรวจสอบได้. ระบุ source (ไฟล์:บรรทัด ถ้าทำได้) ที่กติกามาจาก. "
+    "ยึดค่าจริงจากโค้ด (เช่นเจอ min=500 ให้ทดสอบ 499/500/501). ห้ามแต่งกติกาที่ทั้งโค้ดและสเปกไม่มี. "
+    "expected result ต้องตรวจสอบได้. ระบุ source (ไฟล์:บรรทัด หรือชื่อเอกสาร ถ้าทำได้) ที่กติกามาจาก. "
     "ตอบเป็น JSON เท่านั้น:\n"
-    '{"rules":["สรุปกติกาที่เจอในโค้ด ..."],'
+    '{"rules":["สรุปกติกาที่เจอในโค้ด/สเปก ..."],'
+    '"gaps":["ช่องว่างระหว่างสเปกกับโค้ด (ถ้าไม่มีสเปก ให้ [] )"],'
     '"cases":[{"id":"<PREFIX-01>","title":"...","technique":"EP|BVA|DT|ST|PW",'
     '"category":"positive|negative|boundary|edge","precondition":"...",'
-    '"steps":["..."],"expected":"...","priority":"สูง|กลาง|ต่ำ","source":"path:line"}]}'
+    '"steps":["..."],"expected":"...","priority":"สูง|กลาง|ต่ำ","source":"path:line | doc"}]}'
 )
 
 
-def generate_cases(feature, files, cfg, prefix, count):
-    from google.genai import types
+def generate_cases(feature, files, cfg, prefix, count, docs=None):
     code_ctx = "\n\n".join(f"// ===== FILE: {label} =====\n{content}" for label, content in files)
+    doc_ctx = "\n\n".join(f"# ===== SPEC: {src} =====\n{chunk}" for src, chunk in (docs or []))
+    spec_block = (f"\n\n=== สเปก/requirement ที่เกี่ยวข้อง ({len(docs)} ส่วน) ===\n{doc_ctx}"
+                  if docs else "")
     prompt = (
         f"โดเมนระบบ: {cfg.get('domain','')}\n\n"
         f"ฟีเจอร์ที่ต้องออกแบบเทสเคส:\n{feature}\n\n"
         f"ใช้ prefix TC-ID: {prefix} · ออกแบบอย่างน้อย {count} เคส\n\n"
         f"=== โค้ดจริงที่เกี่ยวข้อง ({len(files)} ไฟล์) ===\n{code_ctx or '(ไม่พบโค้ดที่เกี่ยว — ออกแบบจากคำอธิบายเท่าที่ทำได้)'}"
+        f"{spec_block}"
     )
-    resp = _client().models.generate_content(
-        model=GEN_MODEL, contents=prompt,
-        config=types.GenerateContentConfig(
-            system_instruction=SYS_GEN, response_mime_type="application/json",
-            temperature=0.3, max_output_tokens=16384),
-    )
-    return json.loads(resp.text or "{}")
+    text = _complete(GEN_MODEL, system=SYS_GEN, user=prompt, temperature=0.3, max_tokens=16384)
+    return json.loads(text)
 
 
 # ---------------------------------------------------------------- render
@@ -228,8 +357,13 @@ def render_markdown(feature, data, model):
           f"> {len(cases)} เคส", ""]
     rules = data.get("rules", [])
     if rules:
-        md.append("## กติกาที่พบในโค้ด")
+        md.append("## กติกาที่พบในโค้ด/สเปก")
         md += [f"- {r}" for r in rules]
+        md.append("")
+    gaps = data.get("gaps", [])
+    if gaps:
+        md.append("## ⚠️ ช่องว่างระหว่างสเปกกับโค้ด (ต้องรีวิว)")
+        md += [f"- {g}" for g in gaps]
         md.append("")
     md.append("| TC-ID | เคส | เทคนิค | ประเภท | Precondition | ขั้นตอน | ผลที่คาดหวัง | Pri | Source |")
     md.append("|---|---|---|---|---|---|---|---|---|")
@@ -273,12 +407,19 @@ def main():
     ap.add_argument("--prefix", help="prefix ของ TC-ID (ดีฟอลต์อิง config/feature)")
     ap.add_argument("--count", type=int, default=8)
     ap.add_argument("--format", choices=["md", "csv", "both"], default="md")
-    ap.add_argument("--refresh", action="store_true", help="re-fetch repo ล่าสุด")
+    ap.add_argument("--refresh", action="store_true", help="re-fetch repo ล่าสุด + re-index เอกสาร")
+    ap.add_argument("--docs", help="override path โฟลเดอร์เอกสาร spec (RAG); ดีฟอลต์อ่านจาก config docs.path")
+    ap.add_argument("--no-docs", action="store_true", help="ปิด RAG เอกสาร (ใช้เฉพาะโค้ด)")
+    ap.add_argument("--top-k", type=int, default=6, help="จำนวน chunk เอกสารที่ดึงมา ground (ดีฟอลต์ 6)")
     ap.add_argument("--dry-run", action="store_true", help="แค่ clone + โชว์ไฟล์ที่คัดได้ ไม่เรียก AI generate")
     ap.add_argument("--out", default=os.path.join(HERE, "output"))
     args = ap.parse_args()
 
     cfg = load_project(args.project)
+    if args.no_docs:
+        cfg["docs"] = {}
+    elif args.docs:
+        cfg["docs"] = {**cfg.get("docs", {}), "path": args.docs}
     repos = cfg.get("repos", [])
     if args.repos:
         want = {r.strip() for r in args.repos.split(",")}
@@ -299,7 +440,7 @@ def main():
         roots.append((r["name"], dest))
 
     # 2) หาคำค้น (ต้องมี key ถ้าอยากให้ AI ช่วย) + คัดไฟล์
-    if args.dry_run and not os.environ.get("GEMINI_API_KEY"):
+    if args.dry_run and not has_api_key():
         terms = [t.strip() for t in (args.keywords or "").split(",") if t.strip()]
         if not terms:
             print("dry-run ไม่มี key/keywords — ใส่ --keywords เพื่อทดสอบการคัดไฟล์", file=sys.stderr)
@@ -310,21 +451,34 @@ def main():
     print(f"• คัดโค้ดที่เกี่ยว {len(files)} ไฟล์:", file=sys.stderr)
     for label, _ in files:
         print(f"    - {label}", file=sys.stderr)
+    doc_files = _doc_files(cfg.get("docs"))
+    if doc_files:
+        print(f"• เอกสาร spec ที่พบ {len(doc_files)} ไฟล์ (RAG):", file=sys.stderr)
+        for fp in doc_files:
+            print(f"    - {os.path.relpath(fp, HERE)}", file=sys.stderr)
 
     if args.dry_run:
         print("\n(dry-run — ไม่เรียก AI generate)")
         return 0
-    if not os.environ.get("GEMINI_API_KEY"):
-        sys.exit("ERROR: ต้องตั้ง GEMINI_API_KEY เพื่อ generate")
+    if not has_api_key():
+        sys.exit(f"ERROR: ต้องตั้ง key ของผู้ให้บริการ AI สักเจ้าเพื่อ generate ({' / '.join(API_KEY_ENVS)})")
 
-    # 3) generate
+    # 3) RAG: ดึง chunk สเปกที่เกี่ยว (ถ้าตั้ง docs ไว้) แล้ว generate
+    docs = []
+    if doc_files:
+        try:
+            docs = retrieve_docs(args.feature, cfg, args.project, top_k=args.top_k, refresh=args.refresh)
+            print(f"• ground ด้วยสเปก {len(docs)} chunk", file=sys.stderr)
+        except Exception as e:  # noqa: BLE001
+            print(f"หมายเหตุ: RAG เอกสารล้มเหลว ({type(e).__name__}: {e}) — generate จากโค้ดอย่างเดียว", file=sys.stderr)
     prefix = args.prefix or (f"{cfg['tc_prefix']}-" + slugify(args.feature)[:6].upper())
     try:
-        data = generate_cases(args.feature, files, cfg, prefix, args.count)
+        data = generate_cases(args.feature, files, cfg, prefix, args.count, docs=docs)
     except Exception as e:  # noqa: BLE001
-        low = f"{getattr(e,'status','')} {e}".lower()
-        if getattr(e, "code", None) == 429 or any(k in low for k in ("resource_exhausted", "429", "quota", "rate limit")):
-            sys.exit("ERROR: Gemini ติดโควตา/เรตลิมิต — ลองใหม่ หรือเปลี่ยน AI_MODEL")
+        low = f"{getattr(e,'status','')} {type(e).__name__} {e}".lower()
+        code = getattr(e, "code", None) or getattr(e, "status_code", None)
+        if code == 429 or any(k in low for k in ("resource_exhausted", "429", "quota", "rate limit", "ratelimit")):
+            sys.exit(f"ERROR: {GEN_MODEL} ติดโควตา/เรตลิมิต — ลองใหม่ หรือเปลี่ยน AI_MODEL")
         sys.exit(f"ERROR: generate ไม่สำเร็จ ({type(e).__name__}: {e})")
 
     cases = data.get("cases", [])

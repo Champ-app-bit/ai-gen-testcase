@@ -1,3 +1,6 @@
 # AI Test-Case Generator
-google-genai>=1.0
+litellm>=1.50          # เรียกได้หลายเจ้า (Gemini / Claude / OpenAI / Ollama) ด้วย interface เดียว
 PyYAML>=6.0
+# RAG เอกสาร spec (optional — ถ้าไม่ตั้ง docs: ในโปรเจกต์ ก็ไม่จำเป็น)
+chromadb>=0.5         # vector store สำหรับ ground ด้วย requirement
+pypdf>=4.0            # อ่าน PDF spec
