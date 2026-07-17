@@ -1,0 +1,26 @@
+# Dev/staging environment for the ERP {{MODULE}} suite.
+ENV: dev
+
+# Frontend (browser) base — the SPA that serves {{ROUTE}} (hash router).
+BASE_URL: "{{BASE_URL}}"
+
+# Backend REST base — each app dir mounts at /<feature> (server.js:41),
+# so the module API = ${API_BASE_URL}{{API_PREFIX}} and auth = ${API_BASE_URL}/auth.
+API_BASE_URL: "{{API_BASE_URL}}"
+
+# X-Authorization static token (util/config.js apiToken). Update if it rotates.
+API_STATIC_TOKEN: "{{API_STATIC_TOKEN}}"
+
+BROWSER: chrome
+HEADLESS: true
+
+# ── DB verification (OPTIONAL, OFF by default) ──────────────────────────────
+# The MCP mirror is a SEPARATE database from this staging API — do NOT point these
+# at it expecting to see rows the suite just created. Fill only with real staging
+# DB creds to enable row-level assertions (soft-delete, status sync). Left blank =>
+# DB-backed suites Skip with a clear reason.
+DB_HOST: ""
+DB_PORT: 3306
+DB_USER: ""
+DB_PASSWORD: ""
+DB_NAME: ""

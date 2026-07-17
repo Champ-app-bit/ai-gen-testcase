@@ -1,0 +1,31 @@
+# ERP {{MODULE}} routes. FE paths are relative to BASE_URL (hash router); API paths
+# relative to API_BASE_URL. Source: erp-api-2025/app/<feature>/routes.js + FE routes.js.
+ROUTES:
+  # ── Frontend (SPA) — shared ──
+  LOGIN: /login
+  DASHBOARD: /dashboard
+
+  # ── Frontend (SPA) — module ──
+  # Rename MODULE_* keys per module when generating tests, e.g. (payment):
+  #   PAYMENT_LIST: /payment · PAYMENT_ADD: /payment/add · PAYMENT_EDIT: /payment/edit
+  MODULE_LIST: "{{ROUTE}}"
+  MODULE_ADD: "{{ROUTE}}/add"
+  MODULE_EDIT: "{{ROUTE}}/edit"        # + /:id
+
+  # ── Backend REST — shared ──
+  API_AUTH: /auth
+
+  # ── Backend REST — module ──
+  # Rename API_MODULE_* keys per module and add module endpoints, e.g. (payment):
+  #   API_PAYMENT_CONFIRM: /ab_payment/updateConfirm   # PUT + /:id
+  #   API_PAYMENT_COUNT_FILTER: /ab_payment/getCountFilter
+  API_MODULE_LIST: "{{API_PREFIX}}"
+  API_MODULE_BYID: "{{API_PREFIX}}"                    # + /:id
+  API_MODULE_CREATE: "{{API_PREFIX}}"                  # POST
+  API_MODULE_UPDATE: "{{API_PREFIX}}"                  # PUT + /:id
+  API_MODULE_DELETE: "{{API_PREFIX}}/delete"           # POST {"id":[n]}
+
+  # ── ab_order (order factory / order lookups — used by every module) ──
+  API_ORDER_LIST: /ab_order
+  API_ORDER_DUPLICATE: /ab_order/duplicateOrder    # PUT + /:id (mint a disposable order)
+  API_ORDER_DELETE: /ab_order/delete               # POST {"id":[n]} (cleanup)

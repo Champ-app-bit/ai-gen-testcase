@@ -68,6 +68,31 @@ behavior_spec:
   confirmed_dir: /path/to/automation-repo/docs/behavior-spec/confirmed  # นับเป็น spec
 ```
 
+## สร้าง automation suite จากเทสเคส (`/gen-automation`)
+
+ขั้นสุดท้ายของ pipeline: แปลงไฟล์เทสเคส (จาก `/gen-testcases` หรือเขียนมือ) เป็น **Robot Framework
+suite ที่รันได้จริง** โดย scaffold โครง POM จาก `templates/robot-pom/` (skeleton ที่สกัดจาก suite
+ที่ใช้งานจริง — ไม่ให้ AI สร้างโครงจากความจำ) แล้ว ground locator/endpoint จากโค้ดจริงทุกตัว
+
+```bash
+# ติดตั้งครั้งเดียว (global)
+cp commands/gen-automation.md ~/.claude/commands/
+
+# ใช้งาน (ต้อง /setup <project> ก่อน — คำสั่งต้องรู้ path repo automation)
+/gen-automation docs/generated/payment-testcases.md --project erp
+```
+
+สิ่งที่ได้: suite ใหม่ `<module>_robot/` (หรือเทสเพิ่มใน suite เดิม) + CI workflow + DataRequest doc
+— จบที่ `robot --dryrun` เขียว แล้วรายงานว่าเคสไหน automate ไม่ได้เพราะขาดข้อมูลอะไร
+
+สิ่งที่คำสั่งอ่านเป็น ground:
+- `templates/robot-pom/` — skeleton + `TEMPLATE.md` (placeholder + ไฟล์ไหน copy/generate)
+- `references/robot-conventions.md` — กติกากลาง (POM layering, locator naming, tag taxonomy, factory pattern)
+- `automation.conventions` ใน `projects/<name>.yaml` — gotcha เฉพาะโปรเจกต์ (อยู่ใน repo automation เอง)
+
+**Flow เต็มของ pipeline:** `/setup` → `/gen-behavior-spec` (ร่าง+ยืนยัน spec) → `/gen-testcases`
+(backlog เคสที่ยังไม่ automate) → `/gen-automation` (แปลง backlog เป็น suite ที่รันได้)
+
 ## คลัง QA heuristics (ground เพิ่ม — ใช้ได้ทุกเว็บ)
 `references/` เก็บความรู้ QA ที่ **เป็นกลางกับทุกเว็บ/ทุก stack** ให้ `/gen-testcases` และ `/gen-behavior-spec` อ่านเป็น checklist กันตกหล่น (ไม่เรียก API — เป็นแค่ไฟล์อ่าน):
 - `references/tester-heuristics.md` — เทคนิค (EP/BVA/Decision Table/State Transition/Pairwise) + มุม cross-cutting (validation parity, authz matrix, concurrency, error/enumeration, rate limit, security)
@@ -209,4 +234,4 @@ python3 testgen.py "คูปองส่วนลด" --refresh --top-k 8 # re-
 - คัดไฟล์**โค้ด**แบบ keyword ranking (ยังไม่ใช่ semantic/agentic) — เพียงพอสำหรับส่วนใหญ่
 - RAG ใช้กับ**เอกสาร**เท่านั้น (โค้ดยังใช้ grep — เหมาะกว่าสำหรับโครงสร้างโค้ด)
 - ยังไม่ทำ traceability matrix (req→case) และยังไม่ pull Azure Work Item/Wiki (แผนถัดไป)
-- ยังไม่สร้างไฟล์เทสรันได้ (`.robot`/Playwright/pytest)
+- สร้างไฟล์เทสรันได้แล้วผ่าน `/gen-automation` (Robot Framework เท่านั้น — Playwright/pytest ยังไม่รองรับ)

@@ -1,0 +1,9 @@
+[
+  {
+    "key": "factory_template",
+    "_status": "todo",
+    "_note": "Duplication source for the order factory (Mint Fresh Order via PUT /ab_order/duplicateOrder). EVERY module suite needs this — even non-order modules mint their disposable records on a fresh order. Must be a CLEAN order owned by a store the admin can act on: not cancelled/deleted, ts_printed+ts_billed NULL, has items. duplicateOrder resets status fields and gives a fresh, disposable order. Fill `code` (id is resolved once per run by code) and set _status=ready.",
+    "id": null,
+    "code": ""
+  }
+]

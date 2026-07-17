@@ -1,0 +1,28 @@
+# robot.yaml — run profiles for the ERP {{MODULE}} Robot Framework suite.
+# Default target is DEV. Fill resources/variables/env_dev.yaml + test_data/*.json first.
+
+tasks:
+  # Full suite on dev.
+  Dev:
+    shell: robot --pythonpath libraries --variablefile resources/variables/env_dev.yaml --outputdir results tests
+
+  # API-level only (no browser). Fast; several run without seeded UI data.
+  Api:
+    shell: robot --pythonpath libraries --variablefile resources/variables/env_dev.yaml --include level:api --outputdir results tests
+
+  # UI-level only.
+  Ui:
+    shell: robot --pythonpath libraries --variablefile resources/variables/env_dev.yaml --include level:ui --outputdir results tests
+
+  # Everything flagged as needing BA/dev confirmation (the 🔴 rules).
+  Confirm Spec:
+    shell: robot --pythonpath libraries --variablefile resources/variables/env_dev.yaml --include flag:confirm-spec --outputdir results tests
+
+PATH:
+  - .
+PYTHONPATH:
+  - .
+  - libraries
+artifactsDir: results
+ignoreFiles:
+  - .gitignore

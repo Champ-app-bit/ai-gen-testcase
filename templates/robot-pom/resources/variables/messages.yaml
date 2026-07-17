@@ -1,0 +1,21 @@
+# Stable UI text fragments + API messages, asserted by substring.
+# Sources: erp-frontend-2026/src/apps/{{MODULE}}/** and erp-api-2025/app/**.
+MSG:
+  # grid / empty state (shared across module list pages)
+  NO_DATA: ไม่มีข้อมูล
+
+  # login (Login.vue) — success destination
+  LOGIN_DEST: /dashboard
+
+  # API envelope status messages (shared BE wrapper)
+  API_SUCCESS: Success
+  API_PARAM_ERROR: Parameter error
+  API_PROCESS_ERROR: Process error
+  API_RECORD_NOT_FOUND: Record not found
+
+  # ── module-specific: generated per module ──
+  # Add the module's UI prompts / BE messages here with a file:line source comment,
+  # e.g. (payment):
+  #   CONFIRM_PAYMENT_PROMPT: ต้องการที่จะยืนยันการชำระเงินนี้   # page.payment.vue:445-454
+  #   CONFIRM_PAYMENT_SUCCESS: บันทึกสำเร็จ
+  #   ADD_ORDER_NEED_CUSTOMER: กรุณาเลือกข้อมูลลูกค้า            # form.payment.vue

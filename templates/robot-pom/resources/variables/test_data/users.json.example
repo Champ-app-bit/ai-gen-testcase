@@ -1,0 +1,23 @@
+[
+  {
+    "key": "admin",
+    "_status": "todo",
+    "_note": "Full-permission {{MODULE}} user. CI fills from ERP_ADMIN_USER/PASS.",
+    "username": "",
+    "password": ""
+  },
+  {
+    "key": "readonly",
+    "_status": "todo",
+    "_note": "view {{MODULE}} but NO flag_insert/flag_update (perm tests). CI fills from ERP_RO_USER/PASS.",
+    "username": "",
+    "password": ""
+  },
+  {
+    "key": "noview",
+    "_status": "todo",
+    "_note": "OPTIONAL: NO view permission on appSlug {{MODULE}} (redirect test). CI fills from ERP_NOVIEW_USER/PASS.",
+    "username": "",
+    "password": ""
+  }
+]

@@ -1,0 +1,13 @@
+# Real credentials live only on dev machines / GitHub Secrets — never commit.
+# (CI regenerates this file via scripts/write_users_json.py)
+resources/variables/test_data/users.json
+
+# Robot Framework outputs
+results/
+output.xml
+log.html
+report.html
+selenium-screenshot-*.png
+
+__pycache__/
+*.pyc

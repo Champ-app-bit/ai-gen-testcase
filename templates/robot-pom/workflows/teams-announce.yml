@@ -1,0 +1,78 @@
+# ส่งประกาศ/ข้อความเข้า MS Teams channel ของทีม (ใช้ webhook ตัวเดียวกับผลเทส)
+# ใช้ซ้ำได้: dispatch พร้อม title/body (markdown อย่างง่าย: **bold**, ลิสต์ด้วย "- ", ลิงก์)
+name: teams-announce
+
+on:
+  workflow_dispatch:
+    inputs:
+      title:
+        description: "หัวข้อการ์ด"
+        required: true
+        type: string
+      body:
+        description: "เนื้อหา (TextBlock markdown)"
+        required: true
+        type: string
+      url:
+        description: "ลิงก์ปุ่มท้ายการ์ด (optional)"
+        required: false
+        type: string
+        default: ""
+      url_title:
+        description: "ข้อความบนปุ่มลิงก์"
+        required: false
+        type: string
+        default: "เปิดดูรายละเอียด"
+
+permissions:
+  contents: read
+
+jobs:
+  announce:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Post card to Teams
+        env:
+          TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
+          TITLE: ${{ inputs.title }}
+          BODY: ${{ inputs.body }}
+          LINK_URL: ${{ inputs.url }}
+          LINK_TITLE: ${{ inputs.url_title }}
+        run: |
+          if [ -z "$TEAMS_WEBHOOK_URL" ]; then
+            echo "::error::TEAMS_WEBHOOK_URL secret ไม่ได้ตั้งไว้"
+            exit 1
+          fi
+
+          payload=$(jq -n \
+            --arg title "$TITLE" --arg body "$BODY" \
+            --arg url "$LINK_URL" --arg url_title "$LINK_TITLE" \
+            '{
+              type: "message",
+              attachments: [{
+                contentType: "application/vnd.microsoft.card.adaptive",
+                content: {
+                  "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+                  type: "AdaptiveCard",
+                  version: "1.4",
+                  body: [
+                    { type: "TextBlock", size: "Large", weight: "Bolder", text: $title, wrap: true },
+                    { type: "TextBlock", text: $body, wrap: true }
+                  ],
+                  actions: (if ($url | length) > 0 then
+                    [{ type: "Action.OpenUrl", title: $url_title, url: $url }]
+                  else [] end)
+                }
+              }]
+            }')
+
+          http_code=$(printf 'url = "%s"' "$TEAMS_WEBHOOK_URL" | curl -sS -K - \
+            -o /tmp/resp.txt -w "%{http_code}" \
+            -H "Content-Type: application/json" -d "$payload") || http_code=000
+          echo "Teams webhook HTTP status: $http_code"
+          cat /tmp/resp.txt 2>/dev/null; echo
+          if [ "$http_code" -ge 400 ] || [ "$http_code" = "000" ]; then
+            echo "::error::ส่งเข้า Teams ไม่สำเร็จ (HTTP $http_code)"
+            exit 1
+          fi

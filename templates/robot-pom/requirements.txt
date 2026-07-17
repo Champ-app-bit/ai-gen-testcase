@@ -1,0 +1,9 @@
+# Pinned to the versions the suite was verified green against (2026-07-15).
+robotframework==7.1.1
+robotframework-seleniumlibrary==6.6.1
+selenium==4.45.0
+requests>=2.25.1
+# Robot loads all variable files (env_dev/routes/timeouts/messages) from YAML.
+PyYAML>=6.0
+# Optional: row-level DB assertions (tests Skip cleanly without DB creds).
+pymysql>=1.1

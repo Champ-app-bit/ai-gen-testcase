@@ -9,12 +9,20 @@ remotes:
   code:
     - https://dev.azure.com/app-bit/REPOS/_git/erp-frontend-2026
     - https://dev.azure.com/app-bit/REPOS/_git/erp-api-2025
+  automation:
+    - https://github.com/Tanboon-Org/erp_automation_script
 
-# ⚠️ ERP ยังไม่มี automation repo + ไม่มี spec docs → gen แบบ code-only
-#    (ยังไม่มี automation.areas / sources.specs) — ถ้ามีในอนาคตค่อยเพิ่ม
-# automation:
-#   framework: <robot|playwright|...>
-#   areas: { ... }
+# automation repo — หลาย suite ใน repo เดียว (1 module = 1 โฟลเดอร์ <module>_robot)
+# path จริงบนเครื่องอยู่ใน erp.local.yaml (automation.path ชี้ "ราก repo")
+automation:
+  framework: robot
+  layout: multi-suite            # ราก repo มีหลาย <module>_robot อยู่ข้างกัน
+  conventions: docs/CONVENTIONS.md   # gotcha เฉพาะ ERP — relative จากราก repo automation
+  areas:
+    order_v3: erp_order_v3_robot/tests
+    payment: erp_payment_robot/tests
+    delivery: erp_delivery_robot/tests
+  # ⚠️ ERP ยังไม่มี spec docs (sources.specs) — ใช้ behavior_spec.confirmed_dir แทน
 
 # Vue 2 (.vue) + Express (.js) — ปรับให้เข้ากับ ERP
 include_ext: [.vue, .js, .ts, .jsx, .tsx]

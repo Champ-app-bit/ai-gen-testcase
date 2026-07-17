@@ -1,0 +1,7 @@
+# Timeouts in seconds (mirrors the WNW POM shape).
+TIMEOUTS:
+  DEFAULT: 15
+  NAVIGATION: 30
+  SHORT: 5
+  GRID_LOAD: 20
+  DIALOG: 10

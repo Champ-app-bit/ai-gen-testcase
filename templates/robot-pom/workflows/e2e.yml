@@ -1,0 +1,197 @@
+# ERP {{MODULE}} E2E suite — Robot Framework against staging.
+#
+# Required repository secrets (Settings > Secrets and variables > Actions):
+#   ERP_ADMIN_USER / ERP_ADMIN_PASS  — full-permission test account (docs §1)
+#   ERP_RO_USER    / ERP_RO_PASS     — readonly test account (perm tests)
+name: erp-{{MODULE}}-e2e
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 08:{{CRON_MINUTE}} Asia/Bangkok (01:{{CRON_MINUTE}} UTC), Mon-Fri — stagger the minute
+    # per module suite so runs don't fight over staging data at the same time.
+    - cron: "{{CRON_MINUTE}} 1 * * 1-5"
+
+# Two runs at once would fight over staging data (sort/pagination/bulk tests).
+concurrency:
+  group: erp-{{MODULE}}-e2e
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: {{MODULE}}_robot
+
+jobs:
+  robot:
+    runs-on: ubuntu-latest # Chrome preinstalled; Selenium Manager fetches the driver
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: {{MODULE}}_robot/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Write test accounts from secrets
+        env:
+          ERP_ADMIN_USER: ${{ secrets.ERP_ADMIN_USER }}
+          ERP_ADMIN_PASS: ${{ secrets.ERP_ADMIN_PASS }}
+          ERP_RO_USER: ${{ secrets.ERP_RO_USER }}
+          ERP_RO_PASS: ${{ secrets.ERP_RO_PASS }}
+          ERP_NOVIEW_USER: ${{ secrets.ERP_NOVIEW_USER }}
+          ERP_NOVIEW_PASS: ${{ secrets.ERP_NOVIEW_PASS }}
+        run: python scripts/write_users_json.py
+
+      - name: Run Robot suite
+        # known-bug = tests that intentionally fail while a reported backend bug
+        # is open. They show as SKIP so the build stays green without hiding NEW
+        # failures. Remove the tag when dev ships the fix.
+        #
+        # State-changing tests mint disposable data per run via the factory
+        # (suite_helpers: Mint Fresh Order / module factory) and are cleaned up below,
+        # so the suite is rerun-safe. Each minted record logs a `MINTED ...` marker
+        # into output.xml that the cleanup step soft-deletes.
+        run: >
+          robot --pythonpath libraries
+          --variablefile resources/variables/env_dev.yaml
+          --skiponfailure known-bug
+          --outputdir results
+          tests
+
+      - name: Clean up minted {{MODULE}} records and orders
+        if: always()
+        env:
+          ERP_ADMIN_USER: ${{ secrets.ERP_ADMIN_USER }}
+          ERP_ADMIN_PASS: ${{ secrets.ERP_ADMIN_PASS }}
+        run: python scripts/cleanup_minted.py results/output.xml
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: robot-results-{{MODULE}}
+          path: {{MODULE}}_robot/results/
+          retention-days: 14
+
+      # แจ้งผลเข้า MS Teams เมื่อ run จบจริง (success/failure) — ไม่ยิงตอนถูก cancel
+      # (รูปแบบการ์ดเดียวกับ automation_wnw_robot; ข้าม step เงียบๆ ถ้ายังไม่ตั้ง secret)
+      - name: Notify MS Teams
+        if: ${{ !cancelled() }}
+        env:
+          TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.ref_name }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          if [ -z "$TEAMS_WEBHOOK_URL" ]; then
+            echo "TEAMS_WEBHOOK_URL secret ไม่ได้ตั้งไว้ — ข้ามการแจ้งเตือน Teams"
+            exit 0
+          fi
+
+          # อ่านสถิติ + จำแนก skip ว่า "ขาดอะไร" (known-bug/บัญชี/seed/harness/DB/อื่นๆ)
+          # จาก output.xml เพื่อบอกทีมว่ายังปลดล็อกเทสไม่ได้เพราะรออะไร
+          if [ -f results/output.xml ]; then
+            data=$(python3 - <<'PY'
+          import xml.etree.ElementTree as ET, json
+          root = ET.parse('results/output.xml').getroot()
+          t = root.find('./statistics/total/stat')
+          passed = int(t.get('pass','0')); failed = int(t.get('fail','0')); skipped = int(t.get('skip','0'))
+          kb = 0
+          buckets = {'บัญชี':0,'seed':0,'harness':0,'DB':0,'อื่นๆ':0}
+          for test in root.iter('test'):
+              st = test.find('status')
+              if st.get('status') != 'SKIP':
+                  continue
+              tags = [x.text for x in test.findall('.//tag')]
+              if 'known-bug' in tags:
+                  kb += 1; continue
+              m = st.text or ''
+              if 'account' in m: buckets['บัญชี'] += 1
+              elif 'seed' in m: buckets['seed'] += 1
+              elif any(k in m for k in ('harness','stub','mail','binary')): buckets['harness'] += 1
+              elif 'DB access' in m: buckets['DB'] += 1
+              else: buckets['อื่นๆ'] += 1
+          summary = ' · '.join(f'{k} {v}' for k, v in buckets.items() if v)
+          print(json.dumps({'passed':passed,'failed':failed,'skipped':skipped,'kbskip':kb,
+                            'blocked':skipped-kb,'blocked_summary':summary or '-'}))
+          PY
+            )
+          else
+            echo "ไม่พบ results/output.xml (เทสอาจไม่ได้รัน) — รายงานเป็น 0 พร้อมสถานะ error"
+            data='{"passed":0,"failed":0,"skipped":0,"kbskip":0,"blocked":0,"blocked_summary":"-"}'
+          fi
+          passed=$(echo "$data" | jq -r .passed); failed=$(echo "$data" | jq -r .failed)
+          skipped=$(echo "$data" | jq -r .skipped); kbskip=$(echo "$data" | jq -r .kbskip)
+          blocked=$(echo "$data" | jq -r .blocked); blocked_summary=$(echo "$data" | jq -r .blocked_summary)
+
+          if [ "$failed" -gt 0 ] || [ ! -f results/output.xml ]; then
+            status="❌ FAILED"; color="Attention"
+          elif [ "$kbskip" -gt 0 ]; then
+            status="✅ PASSED (known-bug $kbskip รอ dev แก้)"; color="Good"
+          elif [ "$skipped" -gt 0 ]; then
+            status="✅ PASSED (มี skipped)"; color="Good"
+          else
+            status="✅ PASSED"; color="Good"
+          fi
+
+          DEV_REQUEST_URL="${{ github.server_url }}/${{ github.repository }}/blob/${{ github.ref_name }}/{{MODULE}}_robot/docs/QA-ERP-{{MODULE}}-Automation-DataRequest.md"
+          payload=$(jq -n \
+            --argjson d "$data" --arg status "$status" --arg color "$color" \
+            --arg repo "$REPO" --arg branch "$BRANCH" --arg actor "$ACTOR" \
+            --arg url "$RUN_URL" --arg devreq "$DEV_REQUEST_URL" \
+            '{
+              type: "message",
+              attachments: [{
+                contentType: "application/vnd.microsoft.card.adaptive",
+                content: {
+                  "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+                  type: "AdaptiveCard",
+                  version: "1.4",
+                  body: ([
+                    { type: "TextBlock", size: "Large", weight: "Bolder", color: $color,
+                      text: ("ERP {{MODULE}} E2E (staging) — " + $status), wrap: true },
+                    { type: "TextBlock", isSubtle: true, spacing: "None", wrap: true,
+                      text: ($repo + " • branch " + $branch + " • by " + $actor) },
+                    { type: "FactSet", facts: [
+                      { title: "✅ Passed",  value: ($d.passed  | tostring) },
+                      { title: "❌ Failed",  value: ($d.failed  | tostring) },
+                      { title: "⏭️ Skipped", value: (if $d.kbskip > 0
+                          then "\($d.skipped) (🐞 known-bug \($d.kbskip) / blocked \($d.blocked))"
+                          else ($d.skipped | tostring) end) }
+                    ]}
+                  ] + (if $d.blocked > 0 then [
+                    { type: "TextBlock", weight: "Bolder", spacing: "Medium", wrap: true,
+                      text: ("⏳ ขาดอะไร (blocked " + ($d.blocked | tostring) + "): " + $d.blocked_summary) }
+                  ] else [] end)
+                    + (if $d.kbskip > 0 then [
+                    { type: "TextBlock", isSubtle: true, size: "Small", wrap: true,
+                      text: "🐞 known-bug = บั๊กที่รายงาน dev แล้ว (--skiponfailure แปลงเป็น skip) — แก้เสร็จตัวเลขเป็น 0 เอง" }
+                  ] else [] end)),
+                  actions: [
+                    { type: "Action.OpenUrl", title: "ดูผลรันบน GitHub", url: $url },
+                    { type: "Action.OpenUrl", title: "รายการที่ต้องขอ dev", url: $devreq }
+                  ]
+                }
+              }]
+            }')
+
+          echo "Counts -> passed=$passed failed=$failed skipped=$skipped (known-bug=$kbskip, blocked=$blocked: $blocked_summary)"
+          # URL ผ่าน curl config ทาง stdin (ไม่โผล่ใน process list) + fail เป็นแค่ warning
+          # ไม่ทำ run เขียวๆ ให้แดงเพราะ notification สะดุด (บทเรียนจาก wnw QA review)
+          http_code=$(printf 'url = "%s"' "$TEAMS_WEBHOOK_URL" | curl -sS -K - \
+            -o /tmp/teams_resp.txt -w "%{http_code}" \
+            -H "Content-Type: application/json" -d "$payload") || http_code=000
+          echo "Teams webhook HTTP status: $http_code"
+          echo "Response body:"; cat /tmp/teams_resp.txt 2>/dev/null; echo
+          if [ "$http_code" -ge 400 ] || [ "$http_code" = "000" ]; then
+            echo "::warning::Teams webhook ล้มเหลว (HTTP $http_code) — ผลเทสไม่กระทบ ดู response body ด้านบน"
+          fi
