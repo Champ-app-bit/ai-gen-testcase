@@ -21,7 +21,10 @@ MUST return nothing.
 | `{{BASE_URL}}` | FE base URL (staging) | `https://staging.example.com` |
 | `{{API_BASE_URL}}` | BE REST base URL (staging) | `https://erp-api.example.com` |
 | `{{API_STATIC_TOKEN}}` | X-Authorization static token (util/config.js apiToken) | `eyJ...` |
-| `{{CRON_MINUTE}}` | cron minute for the daily CI run — STAGGER per module so suites do not run simultaneously against staging (order_v3=00, payment=15, delivery=30, ...) | `15` |
+
+> CI runs are **manual-only** (`workflow_dispatch` — team policy, no schedule). If a project
+> ever re-enables a schedule, stagger the cron minute per module suite so runs don't fight
+> over staging data (see the commented example in `workflows/e2e.yml`).
 
 ## Scaffold steps
 

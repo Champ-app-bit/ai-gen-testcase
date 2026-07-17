@@ -46,7 +46,7 @@ robot --pythonpath libraries --variablefile resources/variables/env_dev.yaml --i
 
 ## CI
 
-`.github/workflows/erp-{{MODULE}}-e2e.yml` — cron 08:{{CRON_MINUTE}} น. (Asia/Bangkok) จ-ศ + dispatch, ubuntu-latest.
+`.github/workflows/erp-{{MODULE}}-e2e.yml` — **กดรันมือเท่านั้น** (workflow_dispatch — นโยบายทีม ไม่รันอัตโนมัติ), ubuntu-latest.
 Secrets: `ERP_ADMIN_USER/PASS`, `ERP_RO_USER/PASS`, `ERP_NOVIEW_USER/PASS` (optional), `TEAMS_WEBHOOK_URL` (optional).
 Teams card แยกนับ known-bug ออกจาก skip ปกติ.
 

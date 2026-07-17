@@ -6,11 +6,12 @@
 name: erp-{{MODULE}}-e2e
 
 on:
+  # Manual runs only (Actions > Run workflow) — team policy: never run E2E automatically.
+  # If a schedule is ever wanted, add it back with a STAGGERED minute per module suite
+  # so runs don't fight over staging data, e.g.:
+  #   schedule:
+  #     - cron: "15 1 * * 1-5"   # 08:15 Asia/Bangkok (01:15 UTC), Mon-Fri
   workflow_dispatch:
-  schedule:
-    # 08:{{CRON_MINUTE}} Asia/Bangkok (01:{{CRON_MINUTE}} UTC), Mon-Fri — stagger the minute
-    # per module suite so runs don't fight over staging data at the same time.
-    - cron: "{{CRON_MINUTE}} 1 * * 1-5"
 
 # Two runs at once would fight over staging data (sort/pagination/bulk tests).
 concurrency:

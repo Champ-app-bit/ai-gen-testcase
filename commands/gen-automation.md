@@ -40,7 +40,7 @@ allowed-tools: Read, Grep, Glob, Write, Edit, Bash, AskUserQuestion
    - config มี `automation.layout: multi-suite` → `automation.path` คือราก repo เอง (มีหลาย `<module>_robot/` อยู่ข้างกัน — suite ปลายทางคือ `<path>/<module>_robot/`)
    - ไม่ระบุ layout และ path ลงท้าย `tests` → ราก suite คือโฟลเดอร์แม่ของ `tests`
    - **suite ของ module นี้มีอยู่แล้ว** → โหมด **extend**: เพิ่มไฟล์เทส/keyword/locator ใหม่ตาม convention ของ suite นั้น **ห้าม scaffold ทับ, ห้ามแก้เทสเดิมที่ผ่านอยู่** (แก้ได้เฉพาะเมื่อผู้ใช้สั่ง)
-   - **ยังไม่มี** → โหมด **scaffold**: copy `templates/robot-pom/` (จาก repo เครื่องมือนี้) ไปเป็นโฟลเดอร์ suite ใหม่ แล้วแทน placeholder ทั้งหมด (`{{MODULE}}`, `{{ENTITY}}`, `{{TC_PREFIX}}`, `{{API_PREFIX}}`, `{{ROUTE}}`, `{{BASE_URL}}`, `{{API_BASE_URL}}`, `{{API_STATIC_TOKEN}}`, `{{CRON_MINUTE}}`) — ความหมาย + ตัวอย่างค่า อยู่ใน `templates/robot-pom/TEMPLATE.md` (รวมถึงขั้นตอนย้าย `workflows/e2e.yml` ไป `.github/workflows/` ที่ราก repo)
+   - **ยังไม่มี** → โหมด **scaffold**: copy `templates/robot-pom/` (จาก repo เครื่องมือนี้) ไปเป็นโฟลเดอร์ suite ใหม่ แล้วแทน placeholder ทั้งหมด (`{{MODULE}}`, `{{ENTITY}}`, `{{TC_PREFIX}}`, `{{API_PREFIX}}`, `{{ROUTE}}`, `{{BASE_URL}}`, `{{API_BASE_URL}}`, `{{API_STATIC_TOKEN}}`) — ความหมาย + ตัวอย่างค่า อยู่ใน `templates/robot-pom/TEMPLATE.md` (รวมถึงขั้นตอนย้าย `workflows/e2e.yml` ไป `.github/workflows/` ที่ราก repo)
    - แทนเสร็จแล้ว `grep -r "{{" <suite>` ต้อง**ไม่เหลือ** placeholder
 
 4. **Ground จากโค้ดจริง — locator/endpoint ทุกตัวต้องมีที่มา**:
