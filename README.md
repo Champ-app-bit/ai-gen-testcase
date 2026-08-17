@@ -18,6 +18,7 @@
 
 ```bash
 # ติดตั้งครั้งเดียว (global — ใช้ได้ทุก repo)
+pip3 install --user graphifyy
 cp commands/gen-testcases.md ~/.claude/commands/
 
 # ใช้งาน: เข้า repo เว็บไหนก็ได้ แล้วเปิด Claude Code
