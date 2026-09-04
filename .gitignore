@@ -8,3 +8,13 @@ venv/
 projects/*.local.yaml
 # Graphify knowledge graph cache — rebuildable, ไม่ commit
 graphify-out/
+
+# log ของตัวรัน ./testgen (ต่อเครื่อง ไม่ต้อง commit)
+logs/
+
+# permission ส่วนตัวต่อเครื่อง (settings.json ที่เป็น allowlist ของ ./testgen ยัง commit)
+.claude/settings.local.json
+# backup ที่ /setup ทิ้งไว้
+*.bak
+# สคริปต์ชั่วคราวเฉพาะเครื่อง/เฉพาะโปรเจกต์ (hardcode path — ใช้ run.sh ของ repo นั้นแทน)
+scripts/_v2_run.py

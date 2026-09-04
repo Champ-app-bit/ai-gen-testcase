@@ -1,0 +1,559 @@
+#!/usr/bin/env bash
+# testgen — autopilot ของสายพานเทส: สั่งครั้งเดียว แล้วปล่อยทิ้งไว้กี่วันก็ได้
+#
+#   ./testgen loveryoyflower                    ← เดินทุกเฟสจนจบ (ถ้ายังไม่มี project จะถามครั้งเดียว)
+#   ./testgen ~/Web/loveryoyflower --domain "ร้านดอกไม้"   ← project ใหม่จาก path
+#   ./testgen <p> --daemon                      ← แยกไปหลังฉาก ปิด terminal ได้
+#   ./testgen <p> --status                      ← มันไปถึงไหนแล้ว (อ่านได้ตอนกำลังรัน)
+#   ./testgen <p> --stop                        ← สั่งหยุดสุภาพ (จบ module ที่ค้างก่อน)
+#   ./testgen <p> --report                      ← ออกรายงานเฉย ๆ
+#
+# ทำไมต้องเป็น shell ไม่ใช่ slash command: โควตาหมด = session ของ claude ตาย
+# ตัวนี้อยู่ข้างนอก จึงนอนรอโควตารีเซ็ตแล้วสั่งใหม่ได้เรื่อย ๆ เป็นวัน
+# ความคืบหน้าอยู่ใน modules.yaml (ไม่ใช่ในบทสนทนา) → ไฟดับ/รีบูตแล้วสั่งซ้ำ ก็ไปต่อจากเดิม
+set -uo pipefail
+
+TOOL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$TOOL_DIR" || exit 1
+
+PROJECT="" ; TARGET_PATH="" ; MODE="auto"
+MAX=0 ; MODULES="" ; DAEMON=0 ; DRY=0 ; NO_RUN=0
+declare -a CODE_PATHS=() ; declare -a ADD_DIRS=() ; AUTOMATION="" ; DOMAIN="" ; ENV_FILE_USED=""
+PERM="${TESTGEN_PERM:-acceptEdits}"
+QUOTA_WAIT="${TESTGEN_QUOTA_WAIT:-900}"          # นอนรอโควตารอบแรก (วินาที) — เพิ่มเท่าตัวทุกครั้ง
+QUOTA_WAIT_MAX="${TESTGEN_QUOTA_WAIT_MAX:-3600}"
+STRIKE_MAX="${TESTGEN_STRIKE_MAX:-2}"            # module เดิมไม่ขยับกี่รอบ ถึงข้าม
+QUOTA_SLEEP_MAX="${TESTGEN_QUOTA_SLEEP_MAX:-21600}"   # เพดานการนอนรอ 1 ครั้ง (กัน parse เวลาผิดแล้วหลับ 20 ชม.)
+CALL_TIMEOUT="${TESTGEN_CALL_TIMEOUT:-14400}"    # เพดานต่อ 1 module (วินาที) 4 ชม. — วัดจากจริง: module ใหญ่สุด (order 22.7k บรรทัด) ใช้ 2h38m
+PILOT_TRIES="${TESTGEN_PILOT_TRIES:-3}"          # นำร่องล้มได้กี่ module ก่อนยอมแพ้
+FAIL_MAX="${TESTGEN_FAIL_MAX:-8}"                # claude ตายติดกันกี่ครั้ง ถึงหยุดทั้งงาน
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --status)     MODE="status" ; shift ;;
+    --stop)       MODE="stop" ; shift ;;
+    --report)     MODE="report" ; shift ;;
+    --run-only)   MODE="run" ; shift ;;
+    --dry-run)    DRY=1 ; shift ;;
+    --daemon)     DAEMON=1 ; shift ;;
+    --no-run)     NO_RUN=1 ; shift ;;
+    --max)        MAX="${2:-0}" ; shift 2 ;;
+    --modules)    MODULES="${2:-}" ; shift 2 ;;
+    --code)       CODE_PATHS+=("${2:-}") ; shift 2 ;;
+    --automation) AUTOMATION="${2:-}" ; shift 2 ;;
+    --domain)     DOMAIN="${2:-}" ; shift 2 ;;
+    -h|--help)    sed -n '2,15p' "$0" ; exit 0 ;;
+    -*)           echo "ไม่รู้จัก option: $1" ; exit 2 ;;
+    *)            if [ -d "$1" ]; then TARGET_PATH="$1" ; else PROJECT="$1" ; fi ; shift ;;
+  esac
+done
+
+# path → ชื่อ project จาก basename
+if [ -n "$TARGET_PATH" ] && [ -z "$PROJECT" ]; then
+  PROJECT="$(basename "${TARGET_PATH%/}" | tr '[:upper:] ' '[:lower:]-' | tr -cd 'a-z0-9_-')"
+  [ ${#CODE_PATHS[@]} -eq 0 ] && CODE_PATHS+=("$(cd "$TARGET_PATH" && pwd)")
+fi
+
+if [ -z "$PROJECT" ]; then
+  echo "ใช้: ./testgen <project | path ของ repo> [--daemon] [--status] [--stop] [--report]"
+  echo ""
+  echo "project ที่มีอยู่:"
+  for f in projects/*.yaml; do
+    b="$(basename "$f" .yaml)"
+    case "$b" in *.local|_local.example) continue ;; esac
+    if [ -f "projects/$b.local.yaml" ]; then printf '  %-14s setup แล้ว\n' "$b"
+    else printf '  %-14s ยังไม่ setup บนเครื่องนี้\n' "$b" ; fi
+  done
+  exit 2
+fi
+
+LOG_DIR="$TOOL_DIR/logs" ; mkdir -p "$LOG_DIR"
+STATE="$LOG_DIR/$PROJECT.state"
+STOPF="$LOG_DIR/$PROJECT.stop"
+PIDF="$LOG_DIR/$PROJECT.pid"
+LOG="$LOG_DIR/$PROJECT-$(date +%Y%m%d-%H%M%S).log"
+
+say() { printf '%s  %s\n' "$(date '+%m-%d %H:%M:%S')" "$*" | tee -a "$LOG" ; }
+mark() {   # เขียนสถานะลงดิสก์ทุกครั้งที่ขยับ — ให้ --status อ่านได้ระหว่างรัน
+  printf 'project=%s\nphase=%s\ndetail=%s\nheartbeat=%s\nstarted=%s\npid=%s\nlog=%s\n' \
+    "$PROJECT" "$1" "${2:-}" "$(date '+%Y-%m-%d %H:%M:%S')" "${STARTED:-}" "$$" "$LOG" > "$STATE"
+}
+
+# ระหว่างที่ claude ทำ 1 module (เป็นสิบนาที) ต้องมีอะไรเต้นให้เห็นว่ายังไม่ตาย
+# credential ต้องไม่อยู่ใน repo และไม่อยู่ใน ~/.bashrc (ทุก process จะเห็น)
+# โหลดจากไฟล์นอก repo ที่ chmod 600 → --daemon จึงทำงานได้จาก shell ไหนก็ได้
+load_env_file() {
+  local f="${TESTGEN_ENV_FILE:-$HOME/.config/testgen/$PROJECT.env}"
+  [ -f "$f" ] || { ENV_FILE_USED="" ; return 0 ; }
+  local mode ; mode="$(stat -c '%a' "$f" 2>/dev/null)"
+  case "$mode" in
+    600|400) : ;;
+    *) say "⚠ $f สิทธิ์ $mode — คนอื่นในเครื่องอ่านได้ · สั่ง chmod 600 \"$f\"" ;;
+  esac
+  set -a ; . "$f" ; set +a          # ไม่ echo เนื้อไฟล์ ไม่ log ค่า
+  ENV_FILE_USED="$f"
+  say "โหลด credential จาก $f ($(grep -cE '^[[:space:]]*[A-Z_]+=' "$f") ตัวแปร)"
+}
+
+hb_start() {
+  ( while :; do
+      sleep 60
+      [ -f "$STATE" ] && sed -i "s/^heartbeat=.*/heartbeat=$(date '+%Y-%m-%d %H:%M:%S')/" "$STATE" 2>/dev/null
+    done ) & HB_PID=$!
+}
+hb_stop() { [ -n "${HB_PID:-}" ] && kill "$HB_PID" 2>/dev/null ; HB_PID="" ; }
+
+bdir_of() {
+  python3 - "$PROJECT" <<'PYX' 2>/dev/null
+import sys
+sys.path.insert(0, "scripts")
+from pathlib import Path
+from scan_modules import load_cfg, automation_root
+c = load_cfg(sys.argv[1])
+print(c.get("batch", {}).get("dir") or (automation_root(c) / "docs" / "batch"))
+PYX
+}
+
+# ── โหมดอ่านอย่างเดียว: ทำก่อนอย่างอื่นทั้งหมด ────────────────────────────
+case "$MODE" in
+  status)
+    [ -f "$STATE" ] || { echo "ยังไม่เคยรัน autopilot ของ $PROJECT บนเครื่องนี้" ; exit 1 ; }
+    cat "$STATE"
+    if [ -f "$PIDF" ] && kill -0 "$(cat "$PIDF")" 2>/dev/null; then echo "alive=yes"
+    else echo "alive=no   (ตายแล้ว/จบแล้ว — สั่ง ./testgen $PROJECT ซ้ำเพื่อไปต่อจากเดิม)" ; fi
+    lg="$(grep -m1 '^log=' "$STATE" 2>/dev/null | cut -d= -f2-)"
+    if [ -n "$lg" ] && [ -f "$lg" ]; then
+      echo "log เงียบมา=$(( ( $(date +%s) - $(date -r "$lg" +%s) ) / 60 )) นาที"
+    fi
+    python3 - "$PROJECT" <<'PYS' 2>/dev/null
+import sys
+sys.path.insert(0, "scripts")
+from pathlib import Path
+import yaml
+from scan_modules import load_cfg, automation_root
+c = load_cfg(sys.argv[1])
+b = c.get("batch", {}).get("dir") or (automation_root(c) / "docs" / "batch")
+f = Path(b) / "modules.yaml"
+if f.exists():
+    for m in (yaml.safe_load(f.read_text(encoding="utf-8")) or {}).get("modules", []):
+        if m.get("status") == "in_progress":
+            print(f"กำลังทำ={m['name']} stage={m.get('stage')} attempt={m.get('attempt')}")
+            if m.get("note"):
+                print(f"note={m['note']}")
+PYS
+    python3 scripts/batch_state.py report "$PROJECT" 2>/dev/null
+    b="$(bdir_of)" ; [ -n "$b" ] && [ -d "$b/questions" ] && \
+      echo "คำถามค้าง: $(find "$b/questions" -name '*.md' | wc -l) ไฟล์ ที่ $b/questions"
+    exit 0 ;;
+  stop)
+    : > "$STOPF"
+    echo "สั่งหยุดแล้ว — จะจบ module ที่ค้างอยู่ก่อน แล้วออกรายงานให้ (ไม่ทิ้งงานครึ่ง ๆ)"
+    [ -f "$PIDF" ] && echo "pid ที่กำลังรัน: $(cat "$PIDF")"
+    exit 0 ;;
+  report)
+    python3 scripts/make_report.py "$PROJECT" ; exit $? ;;
+esac
+
+# ── กันรันซ้อน: สองตัวแย่งเขียน modules.yaml = ทะเบียนเพี้ยน ──────────────
+if [ -f "$PIDF" ] && kill -0 "$(cat "$PIDF" 2>/dev/null)" 2>/dev/null; then
+  echo "มี autopilot ของ $PROJECT รันอยู่แล้ว (pid $(cat "$PIDF")) — ดูด้วย ./testgen $PROJECT --status"
+  exit 1
+fi
+
+# ── โหมด daemon: แยกตัวเองไปหลังฉาก แล้วคืน prompt ────────────────────────
+if [ "$DAEMON" = 1 ]; then
+  args=("$PROJECT") ; [ "$MAX" != 0 ] && args+=(--max "$MAX")
+  [ -n "$MODULES" ] && args+=(--modules "$MODULES")
+  [ "$NO_RUN" = 1 ] && args+=(--no-run)
+  [ -n "$DOMAIN" ] && args+=(--domain "$DOMAIN")
+  [ -n "$AUTOMATION" ] && args+=(--automation "$AUTOMATION")
+  for c in "${CODE_PATHS[@]:-}"; do [ -n "$c" ] && args+=(--code "$c") ; done
+  [ -n "${TESTGEN_ENV_FILE:-}" ] && export TESTGEN_ENV_FILE
+  setsid nohup "$0" "${args[@]}" >"$LOG_DIR/$PROJECT-daemon.out" 2>&1 &
+  echo "ปล่อยหลังฉากแล้ว (pid $!) · ปิด terminal ได้"
+  echo "ดูสถานะ: ./testgen $PROJECT --status   ·   หยุด: ./testgen $PROJECT --stop"
+  exit 0
+fi
+
+rm -f "$STOPF" ; echo "$$" > "$PIDF"
+STARTED="$(date '+%Y-%m-%d %H:%M:%S')"
+cleanup() { hb_stop ; rm -f "$PIDF" ; }
+trap 'cleanup ; say "ถูกสั่งหยุด — ความคืบหน้าอยู่ในทะเบียนแล้ว สั่ง ./testgen '"$PROJECT"' ซ้ำเพื่อไปต่อ" ; exit 130' INT TERM
+trap cleanup EXIT
+
+stop_requested() { [ -f "$STOPF" ] ; }
+
+# ── เรียก claude หนึ่งรอบ: คืน 0=ปกติ 42=โควตาหมด อื่น=พัง ────────────────
+# เคสจริง 2026-09-04: claude พ่นข้อความ "hit your session limit · resets 6am (Asia/Bangkok)"
+# regex เดิมมีแต่ "usage limit" กับ "resets at" → จับไม่ได้ → ถูกนับเป็น "claude พัง"
+# เผา strike counter จน blocked 3 module ใน 20 วินาที ทั้งที่แค่ต้องนอนรอโควตา
+QUOTA_RX="usage limit|session limit|rate limit|quota|too many requests|limit reached|resets? (at|[0-9])|try again (at|later)|overloaded"
+call_claude() {
+  local prompt="$1" out rc tmp
+  tmp="$(mktemp)"
+  hb_start
+  # CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 สำคัญที่สุด: /gen-batch spawn subagent ทำงานทุก stage
+  # โหมด -p รอ background task แค่ 600s แล้วฆ่าทิ้ง → งานไม่เคยเสร็จ module ถูก mark blocked ผิด ๆ
+  # (เจอจริงตอนรัน erp module order ครั้งแรก 2026-09-01)
+  CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 \
+    timeout "$CALL_TIMEOUT" claude -p "$prompt" --permission-mode "$PERM" "${ADD_DIRS[@]:-}" 2>&1 \
+    | tee -a "$LOG" > "$tmp"
+  rc=${PIPESTATUS[0]}
+  hb_stop
+  out="$(cat "$tmp")" ; rm -f "$tmp"
+  if [ "$rc" = 124 ]; then
+    say "claude เกินเพดาน $((CALL_TIMEOUT/60)) นาที ถูกตัด — นับเป็นความล้มเหลวหนึ่งรอบ"
+    return 1
+  fi
+  if printf '%s' "$out" | grep -qiE "$QUOTA_RX"; then
+    # ถ้าข้อความบอกเวลารีเซ็ตมาด้วย ให้นอนถึงเวลานั้นตรง ๆ แม่นกว่าเดา
+    local t ; t="$(printf '%s' "$out" | grep -oiE "resets? at [0-9]{1,2}(:[0-9]{2})? ?(am|pm)?" | head -1)"
+    if [ -n "$t" ]; then
+      local secs ; secs="$(python3 - "$t" <<'PYT' 2>/dev/null
+import re, sys
+from datetime import datetime, timedelta
+m = re.search(r"(\d{1,2})(?::(\d{2}))?\s*(am|pm)?", sys.argv[1], re.I)
+h = int(m.group(1)); mi = int(m.group(2) or 0); ap = (m.group(3) or "").lower()
+if ap == "pm" and h < 12: h += 12
+if ap == "am" and h == 12: h = 0
+now = datetime.now(); t = now.replace(hour=h % 24, minute=mi, second=0, microsecond=0)
+if t <= now: t += timedelta(days=1)
+print(int((t - now).total_seconds()) + 120)          # เผื่อ 2 นาที
+PYT
+)"
+      if [ -n "$secs" ]; then
+        [ "$secs" -gt "$QUOTA_SLEEP_MAX" ] && secs="$QUOTA_SLEEP_MAX"
+        QUOTA_SLEEP="$secs"
+      fi
+      return 42
+    fi
+    QUOTA_SLEEP="" ; return 42
+  fi
+  return $rc
+}
+
+wait_for_quota() {   # $1 = ข้อความบริบท
+  local s="${QUOTA_SLEEP:-$QUOTA_WAIT}"
+  say "โควตาหมด ($1) — นอนรอ $((s/60)) นาที ตื่น $(date -d "+$s seconds" '+%H:%M' 2>/dev/null) แล้วทำต่อจากจุดเดิม"
+  mark "waiting-quota" "รอโควตา $((s/60)) นาที · $1"
+  local left="$s"
+  while [ "$left" -gt 0 ]; do
+    stop_requested && { say "มีคำสั่งหยุดระหว่างรอโควตา" ; return 1 ; }
+    sleep $(( left > 60 ? 60 : left )) ; left=$(( left - 60 ))
+  done
+  [ -z "${QUOTA_SLEEP:-}" ] && { QUOTA_WAIT=$(( QUOTA_WAIT*2 )) ; [ "$QUOTA_WAIT" -gt "$QUOTA_WAIT_MAX" ] && QUOTA_WAIT="$QUOTA_WAIT_MAX" ; }
+  QUOTA_SLEEP="" ; return 0
+}
+
+# claude ถูกเรียกจาก repo เครื่องมือ แต่ต้องไปเขียนใน repo automation / โฟลเดอร์ spec ซึ่งอยู่นอก cwd
+# → ไม่ส่ง --add-dir ให้ Write/Edit จะถูกปฏิเสธทั้งหมด (เจอตอนทดสอบ ไม่ใช่เดา)
+build_add_dirs() {
+  ADD_DIRS=()
+  local d
+  while IFS= read -r d; do
+    [ -n "$d" ] && [ -d "$d" ] && ADD_DIRS+=(--add-dir "$d")
+  done < <(python3 - "$PROJECT" <<'PYX' 2>/dev/null
+import sys
+sys.path.insert(0, "scripts")
+from pathlib import Path
+from scan_modules import load_cfg, automation_root
+c = load_cfg(sys.argv[1])
+out = []
+out += [str(x) for x in c.get("sources", {}).get("code", [])]
+out += [str(x) for x in c.get("sources", {}).get("specs", [])]
+out.append(str(automation_root(c)))
+for k in ("output", "behavior_spec", "batch"):
+    b = c.get(k) or {}
+    for kk in ("dir", "draft_dir", "confirmed_dir"):
+        if b.get(kk):
+            out.append(str(Path(b[kk])))
+seen = []
+for x in out:
+    if x and x not in seen:
+        seen.append(x)
+print("\n".join(seen))
+PYX
+)
+  [ ${#ADD_DIRS[@]} -gt 0 ] && say "อนุญาตให้เข้าถึง $(( ${#ADD_DIRS[@]} / 2 )) โฟลเดอร์นอก repo เครื่องมือ"
+}
+
+next_module() {
+  python3 scripts/batch_state.py next "$PROJECT" --limit 1 --json 2>/dev/null \
+    | python3 -c 'import json,sys
+d=json.load(sys.stdin); print(d[0]["name"] if d else "")' 2>/dev/null
+}
+
+# ════════════════════════════════════════════════════════════════════════
+# เฟส 1 — bootstrap: ยังไม่มี project/ยังไม่ setup เครื่องนี้
+# ════════════════════════════════════════════════════════════════════════
+phase_bootstrap() {
+  [ -f "projects/$PROJECT.local.yaml" ] && return 0
+  mark "bootstrap" "สร้าง config ของ $PROJECT"
+  say "── เฟส 1: bootstrap ($PROJECT ยังไม่พร้อมบนเครื่องนี้)"
+
+  if [ ${#CODE_PATHS[@]} -eq 0 ] && [ -f "projects/$PROJECT.yaml" ]; then
+    say "มี projects/$PROJECT.yaml แต่ยังไม่มี .local.yaml — ต้องบอก path บนเครื่องนี้"
+  fi
+  if [ ${#CODE_PATHS[@]} -eq 0 ]; then
+    if [ -t 0 ]; then
+      read -r -p "path repo โค้ดที่จะเทส (เว้นวรรคได้ถ้ามีหลายตัว): " -a CODE_PATHS
+    else
+      say "ไม่มี --code และไม่มี terminal ให้ถาม — หยุด"
+      say "สั่งแบบนี้: ./testgen $PROJECT --code <path โค้ด> --automation <path เก็บเทส> --domain \"<โดเมน>\""
+      return 1
+    fi
+  fi
+  for c in "${CODE_PATHS[@]}"; do
+    [ -d "$c" ] || { say "path ไม่มีอยู่จริง: $c — หยุด (ห้ามเดา path)" ; return 1 ; }
+  done
+  if [ -z "$AUTOMATION" ]; then
+    AUTOMATION="$(cd "${CODE_PATHS[0]}" && pwd)_automation_script"
+    if [ -t 0 ]; then
+      read -r -p "repo ที่จะเก็บเทส [$AUTOMATION]: " a ; [ -n "$a" ] && AUTOMATION="$a"
+    else
+      say "ไม่ได้ระบุ --automation → ใช้ $AUTOMATION"
+    fi
+  fi
+  if [ -z "$DOMAIN" ] && [ -t 0 ]; then
+    read -r -p "ระบบนี้คือระบบอะไร 1 บรรทัด (ช่วยให้ทุกขั้นเดาบริบทถูก): " DOMAIN
+  fi
+
+  local args=("$PROJECT")
+  for c in "${CODE_PATHS[@]}"; do args+=(--code "$c") ; done
+  args+=(--automation "$AUTOMATION")
+  [ -n "$DOMAIN" ] && args+=(--domain "$DOMAIN")
+  say "รัน bootstrap_project.py ${args[*]}"
+  python3 scripts/bootstrap_project.py "${args[@]}" 2>&1 | tee -a "$LOG"
+  [ -f "projects/$PROJECT.local.yaml" ] || { say "bootstrap ไม่สำเร็จ — ดู log" ; return 1 ; }
+  say "✓ config พร้อม: projects/$PROJECT.yaml + .local.yaml"
+}
+
+# ════════════════════════════════════════════════════════════════════════
+# เฟส 2 — scout: ทะเบียน module (ไม่ต้องใช้ claude เลย จึงไม่กินโควตา)
+# ════════════════════════════════════════════════════════════════════════
+phase_scout() {
+  python3 scripts/batch_state.py report "$PROJECT" >/dev/null 2>&1 && return 0
+  mark "scout" "สแกนหา module"
+  say "── เฟส 2: สแกนหา module (ไม่ใช้โควตา)"
+  if ! python3 scripts/scan_modules.py "$PROJECT" 2>&1 | tee -a "$LOG" \
+       | grep -qv "discovery.modules ยังว่าง"; then :; fi
+  if ! python3 scripts/batch_state.py report "$PROJECT" >/dev/null 2>&1; then
+    # bootstrap เดา layout ไม่ออกเป็นเคสปกติของ repo ใหม่ — ลองเติมเองถ้าคำตอบมีทางเดียว
+    say "สแกนไม่ได้ — ลองเติม discovery ให้อัตโนมัติ"
+    if python3 scripts/autofill_discovery.py "$PROJECT" 2>&1 | tee -a "$LOG" | grep -q "เติมให้แล้ว"; then
+      python3 scripts/scan_modules.py "$PROJECT" 2>&1 | tee -a "$LOG"
+    fi
+  fi
+  python3 scripts/batch_state.py report "$PROJECT" >/dev/null 2>&1 \
+    || { say "ยังไม่ได้ทะเบียน module — ต้องเติม discovery.modules ใน projects/$PROJECT.yaml เอง (ข้อความด้านบนบอกว่าต้องใส่อะไร)" ; return 1 ; }
+  python3 scripts/batch_state.py report "$PROJECT" | tee -a "$LOG"
+}
+
+# ════════════════════════════════════════════════════════════════════════
+# เฟส 3 — นำร่อง: module แรกของ project ที่ยังไม่เคยมี suite
+#   ทำไมต้องแยกเฟส: BASE_URL/flow login/convention ที่ผิดจะถูก clone ไปทุก module
+#   จึงต้องมี module แรกที่ผ่าน verify จริง ก่อนปล่อยรันยาว
+# ════════════════════════════════════════════════════════════════════════
+phase_pilot() {
+  local done_n
+  done_n="$(python3 scripts/batch_state.py report "$PROJECT" 2>/dev/null | grep -cE '^[[:space:]]+done[[:space:]]')"
+  [ "$done_n" != 0 ] && return 0
+
+  say "── เฟส 3: นำร่อง (project นี้ยังไม่มี suite ที่ผ่านเลย)"
+  local try=0 m
+  while [ "$try" -lt "$PILOT_TRIES" ]; do
+    stop_requested && return 1
+    try=$((try+1))
+    m="$(next_module)" ; [ -z "$m" ] && { say "ไม่มี module ให้นำร่อง" ; return 1 ; }
+    mark "pilot" "นำร่อง $m (ครั้งที่ $try/$PILOT_TRIES)"
+    say "▶ นำร่อง: $m (ครั้งที่ $try/$PILOT_TRIES)"
+
+    call_claude "/gen-batch $PROJECT --modules $m --unattended"
+    local rc=$?
+    [ "$rc" = 42 ] && { wait_for_quota "นำร่อง $m" || return 1 ; try=$((try-1)) ; continue ; }
+
+    if python3 scripts/verify_suite.py "$PROJECT" "$m" >>"$LOG" 2>&1; then
+      say "✓ นำร่องผ่าน verify: $m — convention ใช้ได้ ปล่อยรันยาวต่อได้"
+      return 0
+    fi
+    say "✗ นำร่อง $m ไม่ผ่าน verify → mark blocked แล้วลอง module อื่น (เหตุผลอยู่ใน log)"
+    python3 scripts/batch_state.py set "$PROJECT" "$m" \
+      --blocked "นำร่องไม่ผ่าน verify (autopilot ครั้งที่ $try)" >>"$LOG" 2>&1
+  done
+  say "⚠ นำร่องไม่ผ่านครบ $PILOT_TRIES ตัว — หยุดก่อนปล่อยรันยาว"
+  say "  แปลว่ามีของพื้นฐานผิดอยู่ (BASE_URL / flow login / โครง template) ซึ่งถ้าปล่อยต่อจะผิดทุก module"
+  say "  ให้เปิด claude แล้วสั่ง: /gen-batch $PROJECT --attended  เพื่อทำตัวแรกพร้อมคนหนึ่งรอบ"
+  return 1
+}
+
+# ════════════════════════════════════════════════════════════════════════
+# เฟส 4 — batch: ไล่ทุก module ที่เหลือ (ตัวกินเวลาหลัก อยู่ได้เป็นวัน)
+# ════════════════════════════════════════════════════════════════════════
+phase_batch() {
+  local n=0 strikes=0 last="" fails=0 target rc after
+  while : ; do
+    stop_requested && { say "มีคำสั่งหยุด — ออกจากเฟส batch" ; break ; }
+    [ "$MAX" != 0 ] && [ "$n" -ge "$MAX" ] && { say "ครบ $MAX module ตามที่สั่ง" ; break ; }
+    [ "$fails" -ge "$FAIL_MAX" ] && { say "⚠ claude พังติดกัน $fails ครั้ง — หยุดทั้งงาน ดู log" ; break ; }
+
+    if [ -n "$MODULES" ]; then target="$MODULES" ; else target="$(next_module)" ; fi
+    [ -z "$target" ] && { say "ไม่มี module ที่ทำต่อได้แล้ว — จบเฟส batch" ; break ; }
+
+    if [ "$target" = "$last" ]; then
+      strikes=$((strikes+1))
+      if [ "$strikes" -ge "$STRIKE_MAX" ]; then
+        say "⚠ '$target' ไม่ขยับ $strikes รอบ → blocked แล้วข้าม"
+        python3 scripts/batch_state.py set "$PROJECT" "$target" \
+          --blocked "autopilot ข้ามให้: ไม่คืบหน้า $strikes รอบ ดู $(basename "$LOG")" >>"$LOG" 2>&1
+        [ -n "$MODULES" ] && break
+        strikes=0 ; last="" ; continue
+      fi
+    else strikes=0 ; fi
+    last="$target"
+
+    mark "batch" "module $target · เสร็จรอบนี้ $n ตัว"
+    say "▶ $target"
+    if [ -n "$MODULES" ]; then
+      call_claude "/gen-batch $PROJECT --modules $MODULES --unattended"
+    else
+      call_claude "/gen-batch $PROJECT --limit 1 --unattended"
+    fi
+    rc=$?
+
+    if [ "$rc" = 42 ]; then
+      wait_for_quota "module $target" || break
+      strikes=0 ; last="" ; continue      # ไม่นับเป็น strike: ไม่ใช่ความผิดของ module
+    fi
+    if [ "$rc" -ne 0 ]; then
+      fails=$((fails+1)) ; say "claude จบด้วย exit $rc (พังติดกัน $fails/$FAIL_MAX)" ; continue
+    fi
+    fails=0
+
+    after="$(next_module)"
+    if [ "$after" != "$target" ]; then
+      n=$((n+1)) ; say "✓ $target ออกจากคิว (รอบนี้รวม $n module)"
+      [ -n "$MODULES" ] && break
+    fi
+  done
+  say "เฟส batch: ทำได้ $n module ในรอบนี้"
+}
+
+# ════════════════════════════════════════════════════════════════════════
+# เฟส 5 — รันจริงกับ env (ต้องตั้ง run: ใน config ก่อน ไม่งั้นข้าม)
+# ════════════════════════════════════════════════════════════════════════
+phase_run() {
+  [ "$NO_RUN" = 1 ] && { say "ข้ามเฟสรันจริง (--no-run)" ; return 0 ; }
+  mark "run" "รันเทสจริงกับ env"
+  local cfg root cmd to req list stamp ran=0 skipped=0 rc
+  cfg="$(python3 - "$PROJECT" <<'PYX'
+import sys, json
+sys.path.insert(0, "scripts")
+from pathlib import Path
+from scan_modules import load_cfg, automation_root
+import yaml
+c = load_cfg(sys.argv[1]); r = c.get("run") or {}
+bdir = c.get("batch", {}).get("dir") or (automation_root(c) / "docs" / "batch")
+reg = Path(bdir) / "modules.yaml" ; suites = []
+if reg.exists():
+    d = yaml.safe_load(reg.read_text(encoding="utf-8")) or {}
+    suites = sorted({m["suite"] for m in d.get("modules", [])
+                     if m.get("suite") and m.get("status") == "done"})
+ex = set(r.get("exclude_suites") or [])
+suites = [x for x in suites if x not in ex]
+print(json.dumps({"root": str(automation_root(c)), "configured": bool(r.get("cmd")),
+                  "cmd": r.get("cmd", ""), "prepare": r.get("prepare", ""),
+                  "requires_env": r.get("requires_env", []), "excluded": sorted(ex),
+                  "timeout": int(r.get("timeout", 3600)), "suites": suites}, ensure_ascii=False))
+PYX
+)" || { say "อ่าน config ไม่ได้ — ข้ามเฟสรันจริง" ; return 0 ; }
+
+  get() { printf '%s' "$cfg" | python3 -c "import json,sys;v=json.load(sys.stdin)['$1'];print(' '.join(v) if isinstance(v,list) else v)" ; }
+  if [ "$(get configured)" != "True" ]; then
+    say "ข้ามเฟสรันจริง: ยังไม่ได้ตั้ง run: ใน projects/$PROJECT.yaml (ตั้งใจให้ปลอดภัยเป็นค่าเริ่มต้น)"
+    say "  เติมเมื่อพร้อม:  run:"
+    say "    cmd: robot --pythonpath libraries --variablefile resources/variables/env_dev.yaml --outputdir results/{stamp} tests"
+    say "    requires_env: [ERP_ADMIN_USER, ERP_ADMIN_PASS]"
+    return 0
+  fi
+  root="$(get root)" ; cmd="$(get cmd)" ; to="$(get timeout)" ; req="$(get requires_env)"
+  local prep ; prep="$(get prepare)"
+  local ex ; ex="$(get excluded)"
+  [ -n "$ex" ] && say "ไม่รัน suite ที่ถูกกันไว้ใน config: $ex"
+  list="$(printf '%s' "$cfg" | python3 -c 'import json,sys;print("\n".join(json.load(sys.stdin)["suites"]))')"
+
+  for v in $req; do
+    [ -z "${!v:-}" ] && { say "ข้ามเฟสรันจริง: ไม่มี env var $v (รันไปจะได้เทสแดงจาก credential ไม่ใช่จากบั๊ก)" ; return 0 ; }
+  done
+  [ -z "$list" ] && { say "ข้ามเฟสรันจริง: ยังไม่มี suite ที่ status=done" ; return 0 ; }
+
+  stamp="auto-$(date +%Y%m%d-%H%M)"
+  say "── เฟส 5: รันเทสจริง → results/$stamp"
+  while IFS= read -r s; do
+    [ -z "$s" ] && continue
+    stop_requested && { say "มีคำสั่งหยุด — ออกจากเฟสรันจริง" ; break ; }
+    if [ ! -f "$root/$s/resources/variables/env_dev.yaml" ]; then
+      say "  ข้าม $s — ยังไม่มี resources/variables/env_dev.yaml" ; skipped=$((skipped+1)) ; continue
+    fi
+    say "  ▶ $s"
+    # เติม credential ลง users.json จาก env var ก่อนเสมอ (ขั้นเดียวกับที่ CI ทำ)
+    # ไม่ทำ = users.json ยังเป็น _status:todo แล้วเทสจะ SKIP ทั้งชุดแบบเงียบ ๆ
+    if [ -n "$prep" ]; then
+      ( cd "$root/$s" && bash -c "$prep" ) >>"$LOG" 2>&1 \
+        || say "  ⚠ $s: prepare ไม่ผ่าน — เทสที่ต้องล็อกอินจะ SKIP"
+    fi
+    ( cd "$root/$s" && timeout "$to" bash -c "${cmd//\{stamp\}/$stamp}" ) >>"$LOG" 2>&1 ; rc=$?
+    case "$rc" in
+      0)   say "  ✓ $s เขียวทั้ง suite" ;;
+      124) say "  ⏱ $s เกิน ${to}s ถูกตัด (ผลบางส่วนอยู่ใน results/$stamp)" ;;
+      *)   say "  • $s มีเทสแดง (ปกติ — รายงานจะแยกสาเหตุให้)" ;;
+    esac
+    ran=$((ran+1))
+  done <<< "$list"
+  say "รันจริง $ran suite · ข้าม $skipped"
+}
+
+# ════════════════════════════════════════════════════════════════════════
+main() {
+  if [ "$MODE" = "run" ]; then
+    load_env_file
+    say "โหมดรันจริงเท่านั้น: $PROJECT" ; phase_run
+    python3 scripts/make_report.py "$PROJECT" | tee -a "$LOG" ; exit 0
+  fi
+
+  if [ "$DRY" = 1 ]; then
+    say "[dry-run] ไม่เรียก claude และไม่แก้ทะเบียนใด ๆ"
+    say "[dry-run] เฟสที่จะเดิน: bootstrap → scout → นำร่อง → batch → รันจริง → รายงาน"
+    [ -f "projects/$PROJECT.local.yaml" ] && say "[dry-run] เฟส 1 ข้าม (setup แล้ว)" || say "[dry-run] เฟส 1 จะทำ"
+    python3 scripts/batch_state.py report "$PROJECT" 2>&1 | tee -a "$LOG"
+    python3 scripts/batch_state.py next "$PROJECT" --limit 5 2>&1 | tee -a "$LOG"
+    exit 0
+  fi
+
+  command -v claude >/dev/null || { say "ไม่เจอคำสั่ง claude ใน PATH" ; exit 1 ; }
+  load_env_file
+  say "═══ autopilot: $PROJECT ═══"
+  say "log: $LOG · สถานะ: ./testgen $PROJECT --status · หยุด: ./testgen $PROJECT --stop"
+  mark "start" "เริ่ม"
+
+  phase_bootstrap || { mark "failed" "bootstrap ไม่ผ่าน" ; exit 1 ; }
+  phase_scout     || { mark "failed" "scout ไม่ผ่าน" ; exit 1 ; }
+  build_add_dirs
+  phase_pilot     || { mark "failed" "นำร่องไม่ผ่าน — ต้องมีคนทำตัวแรก" ; python3 scripts/make_report.py "$PROJECT" | tee -a "$LOG" ; exit 1 ; }
+  phase_batch
+  phase_run
+
+  mark "report" "ออกรายงานปิดท้าย"
+  say "── เฟส 6: รายงาน"
+  python3 scripts/batch_state.py report "$PROJECT" | tee -a "$LOG"
+  python3 scripts/make_report.py "$PROJECT" | tee -a "$LOG"
+
+  local b q=0 ; b="$(bdir_of)"
+  [ -n "$b" ] && [ -d "$b/questions" ] && q="$(find "$b/questions" -name '*.md' | wc -l)"
+  say ""
+  say "═══ จบ ═══ เริ่ม $STARTED · จบ $(date '+%Y-%m-%d %H:%M:%S')"
+  say "รายงานเต็ม: $b/report.md"
+  [ "$q" != 0 ] && say "คำถามค้าง $q ไฟล์ → เปิด claude แล้วสั่ง: /testgen $PROJECT --answer"
+  [ -f "$b/findings.md" ] && say "บั๊กที่เจอระหว่างทาง: $b/findings.md"
+  mark "done" "จบแล้ว · รายงานที่ $b/report.md"
+}
+main

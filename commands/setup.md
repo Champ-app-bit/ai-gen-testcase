@@ -14,6 +14,17 @@ allowed-tools: Read, Write, Edit, Grep, Glob, Bash, AskUserQuestion
 
 1. **อ่าน config** `projects/<project>.yaml` — ดู `remotes` (git URL ของ repo ที่เกี่ยว) และ `automation.areas`
    - ถ้ามี `projects/<project>.local.yaml` อยู่แล้ว → บอกผู้ใช้ว่ามีอยู่แล้ว ถามว่าจะ setup ใหม่ทับไหม ถ้าไม่ ก็ข้ามไปขั้น verify
+   - **ถ้ายังไม่มี `projects/<project>.yaml` เลย (project ใหม่เอี่ยม)** → **อย่าหยุด และอย่าให้ผู้ใช้เขียน YAML เอง**
+     ให้ถาม path ของ repo โค้ด (ขั้น 2 ด้านล่าง) แล้ว bootstrap ทั้ง config ให้อัตโนมัติ:
+     ```bash
+     python3 scripts/bootstrap_project.py <project> --code <path> [--code <path>...] \
+         [--specs <path>] [--automation <path>] --domain "<โดเมนระบบ 1 บรรทัด>"
+     ```
+     สคริปต์ตรวจ stack เอง (NestJS / Next / Vue2-3 / Laravel รวม monorepo / Express / Django / Spring)
+     แล้วเขียน `include_ext`, `ignore_dirs`, `signal_dirs`, `discovery` โดย**ทดสอบ glob กับดิสก์จริงก่อนเขียน**
+     — จากนั้นเปิดไฟล์ที่ได้ตรวจด้วยตา (จำนวนที่ match + ชื่อตัวอย่างอยู่ใน comment ท้ายบรรทัด)
+     ถ้า stack ไหนออกมาเป็น `unknown` ให้หา marker เองแล้วเติม glob ให้ **พร้อมเสนอเพิ่ม stack นั้นเข้าสคริปต์**
+     เพื่อให้ project ถัดไปที่ใช้ stack เดียวกันไม่ต้องมาแก้อีก
 
 2. **หา + ยืนยัน path ของแต่ละ repo (ถามผู้ใช้ทุกครั้ง)** — สำหรับ `code` (product), `specs` (optional), และ `automation`:
    - ก่อนถาม ให้ **ค้น candidate** ในเครื่องช่วย (เช่น `find ~ -maxdepth 4 -type d -name <ชื่อที่เดาจาก remote>` หรือดูใน `~/Web`, `~/projects`, `~`) เพื่อเสนอเป็นตัวเลือก
@@ -54,8 +65,9 @@ allowed-tools: Read, Write, Edit, Grep, Glob, Bash, AskUserQuestion
    - ถ้ามี specs → ยืนยันว่าเจอเอกสาร
    - สรุปสิ่งที่ verify เป็น checklist ✅/❌
 
-6. **บอกคำสั่งถัดไป** — สรุปว่า setup เสร็จ แล้วบอกให้รัน เช่น:
-   `/gen-testcases สมัครสมาชิก --project <project>`
+6. **บอกคำสั่งถัดไป** — สรุปว่า setup เสร็จ แล้วบอกให้รัน:
+   - `/testgen <project>` — ประตูหน้าบานเดียว ระบบดูเองว่าต้องทำอะไรต่อ (แนะนำ)
+   - หรือเจาะจงเอง: `/module-scout <project>` (ออกทะเบียน module) · `/gen-testcases <ฟีเจอร์> --project <project>`
 
 ## ข้อกำหนด
 - **ตอบเป็นภาษาไทย**

@@ -1,0 +1,46 @@
+# โปรเจกต์ STAPI — สร้างโดย /setup (bootstrap อัตโนมัติ) · ตรวจแล้วแก้ได้ตามจริง
+name: STAPI
+domain: "Strapi 5 ที่มาแทน backend CMS ของเว็บ LYF (LoveYouFlower) — ต้องคืน response เหมือน API เดิมทุกฟิลด์ให้ frontend LYF-Frontend-2025 เปลี่ยนแค่ base URL"
+lang: th
+tc_prefix: TC
+
+# git remote (URL สะอาด ห้ามฝัง PAT) — เติมเองถ้าต้องการให้ /setup เสนอ clone บนเครื่องอื่น
+remotes:
+  code: []
+
+automation:
+  framework: robot
+  layout: multi-suite            # ราก repo มีหลาย <module>_robot อยู่ข้างกัน
+  conventions: docs/CONVENTIONS.md
+  # schema: <module>: { dir: <path relative จาก automation.path>, prefix: TC-<AREA> }
+  # /gen-batch เติม entry ตรงนี้เองทุกครั้งที่ scaffold suite ใหม่ — ไม่ต้องเขียนมือ
+  areas:
+    legacy-category: { dir: legacy-category_robot/tests, prefix: TC-LGC }
+    legacy-post: { dir: legacy-post_robot/tests, prefix: TC-LGP }
+    legacy-service-location: { dir: legacy-service-location_robot/tests, prefix: TC-LSL }
+    legacy-banner: { dir: legacy-banner_robot/tests, prefix: TC-LGB }
+
+# ─────────────────────────────────────────────────────────────────────
+# discovery — บอก /module-scout ว่า "module ของ stack นี้อยู่ตรงไหน"
+# ทุก glob ด้านล่างถูกทดสอบกับดิสก์จริงแล้ว (จำนวนที่ match อยู่ใน comment)
+# ─────────────────────────────────────────────────────────────────────
+discovery:
+  modules:
+    - { side: be, root_match: strapi, glob: "src/api/*", name_from: dirname }   # strapi · 17 รายการ
+    - { side: fe, root_match: LYF-Frontend-2025, glob: "src/pages/*", name_from: dirname }   # next-pages · 16 รายการ
+  # ⚠️ ปิดไว้โดยเจตนา: LYF-Backend-2026 (Laravel 56 controller) คือ "API เดิม" ที่ Strapi ต้องเลียนแบบ
+  #    ไม่ใช่ของที่เราทดสอบ — ยังอยู่ใน sources.code เพื่อให้อ่านเทียบพฤติกรรมได้ แต่ไม่นับเป็น module
+  #    เปิดคืนเมื่อไหร่ก็ตามที่ต้องการทำเทสของ backend เดิมเองจริง ๆ
+  # - { side: be, root_match: LYF-Backend-2026, glob: "*/app/Http/Controllers/*Controller.php", name_from: basename, strip_suffix: "Controller.php", label_with_parent: true }   # laravel · 56 รายการ
+  pair_by: route
+  # exclude = "ไม่ใช่ฟีเจอร์" เท่านั้น (โครงสร้าง framework/ไฟล์ฐาน)
+  # ฟีเจอร์จริงที่ไม่คุ้ม automate ให้ mark risk: skip ในทะเบียนแทน จะได้เห็นว่ารู้จักแต่ตั้งใจไม่ทำ
+  exclude: [shared, common, components, utils, lib, hooks, types, styles, assets, config, constants]
+
+include_ext: [.js, .json, .jsx, .php, .ts, .tsx]
+ignore_dirs: [.cache, .git, .next, .strapi, .tmp, .turbo, .vercel, __pycache__, assets, bootstrap, build, coverage, dist, migrations, node_modules, out, public, storage, types, uploads, vendor]
+ignore_globs: ["*.env*", "*.lock", "*.min.*", "*.map", "*.log", "*.d.ts", "*.spec.*", "*.test.*"]
+signal_dirs: [Controllers, Middleware, Models, Policies, Requests, Rules, Services, api, components, content-types, controllers, hooks, lib, middlewares, pages, policies, routes, services, store, utils, validation]
+
+max_files: 25
+max_total_chars: 120000

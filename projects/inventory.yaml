@@ -1,0 +1,64 @@
+# โปรเจกต์ INVENTORY (Azure DevOps project: ABS-INV) — ระบบบริหารคลังวัสดุ
+name: INVENTORY
+domain: "ระบบบริหารคลังวัสดุ/สต็อก (ABS-INV) — frontend Next.js App Router (TypeScript), backend NestJS + Prisma + MariaDB"
+lang: th
+tc_prefix: TC
+
+# git remote (URL สะอาด — ไม่ฝัง PAT; auth ผ่าน credential helper/PAT ตอน clone)
+# ⚠️ working copy ในเครื่องมี remote ที่ฝัง PAT ไว้ใน URL — ห้ามก๊อป URL แบบนั้นมาใส่ไฟล์นี้
+remotes:
+  code:
+    - https://dev.azure.com/app-bit/ABS-INV/_git/backend
+    - https://dev.azure.com/app-bit/ABS-INV/_git/frontend
+  # automation: ยังไม่มี repo automation ของ inventory — path เครื่องอยู่ใน inventory.local.yaml
+  #             (ถ้าสร้าง remote แล้วให้เติม URL ตรงนี้)
+
+# automation repo — หลาย suite ใน repo เดียว (1 module = 1 โฟลเดอร์ <module>_robot)
+# path จริงบนเครื่องอยู่ใน inventory.local.yaml (automation.path ชี้ "ราก repo")
+automation:
+  framework: robot
+  layout: multi-suite            # ราก repo มีหลาย <module>_robot อยู่ข้างกัน
+  conventions: docs/CONVENTIONS.md   # gotcha เฉพาะ inventory — relative จากราก repo automation
+  # schema: <module>: { dir: <path relative จาก automation.path>, prefix: TC-<AREA> }
+  # ⚠️ ต้องเป็น {dir, prefix} ทุกตัว — /gen-batch อ่าน prefix เพื่อตั้งเลข TC-ID ต่อ และเขียน entry ใหม่กลับเข้ามาเอง
+  areas:
+    # นำร่องโมดูลแรก: จัดการแท็กวัสดุ — BE src/modules/tag (CRUD 5 endpoints, soft delete,
+    # กติกาชื่อซ้ำระดับแอป), FE src/app/modules/tag (list / create / update)
+    tag: { dir: inventory_tag_robot/tests, prefix: TC-TAG, planned: true }   # ยังไม่ scaffold (repo automation ยังว่าง)
+    # โมดูลถัดไป: ให้ /module-scout ออกทะเบียนก่อน แล้ว /gen-batch เติม entry ตรงนี้เอง
+    #   — ไม่ต้องมานั่งเขียนมือทีละบรรทัด
+
+# ─────────────────────────────────────────────────────────────────────
+# discovery — บอก /module-scout ว่า "module ของ stack นี้อยู่ตรงไหน" (portable, ไม่มี path เครื่อง)
+# ยืนยันแล้ว 2026-08-26: BE src/modules/* = 31 · FE src/app/modules/* = 35
+# ⚠️ code root ฝั่ง FE ซ้อน 1 ชั้น (frontend/frontend) — glob เริ่มจาก path ใน sources.code เสมอ
+# ─────────────────────────────────────────────────────────────────────
+discovery:
+  modules:
+    - { side: be, root_match: backend,  glob: "src/modules/*",     name_from: dirname }
+    - { side: fe, root_match: frontend, glob: "src/app/modules/*", name_from: dirname }
+  pair_by: name                 # ชื่อโฟลเดอร์ตรงกันสองฝั่ง (stock-count ↔ stock-count)
+  # exclude = "ไม่ใช่ฟีเจอร์" เท่านั้น · ฟีเจอร์จริงที่ไม่คุ้มทำ ให้ mark risk: skip ในทะเบียนแทน
+  exclude: [transaction-shared, shared, common, layout.tsx, page.tsx, AuthGuardClient.tsx]
+  notes: >
+    BE เป็น NestJS module ชัดเจน (มี *.module.ts ทุกตัว) — ฝั่งนี้เป็น source of truth ของขอบเขต
+    · FE บางตัวไม่มีคู่ BE (login/logout/profile/role/user/history/inventory) และ BE บางตัวไม่มีหน้า
+
+# เอกสาร spec ของจริงอยู่ "ใน product repo" (ต่างจาก ERP ที่ไม่มีเอกสารเลย)
+#   backend/docs/  — stock-counts-api.md, material-receive-additional-expense.md,
+#                    document-additional-expense.md, backend-changes-location-supplier.md, postman/
+#   frontend/docs/ — WORKFLOWS.md, SEQUENCE_DIAGRAMS.md, prp/*.PRP.md
+# path จริงตั้งใน inventory.local.yaml → sources.specs
+
+# NestJS (.ts) + Next.js (.ts/.tsx) + Prisma schema (กติกา DB: unique/constraint/default)
+include_ext: [.ts, .tsx, .js, .jsx, .prisma]
+ignore_dirs: [node_modules, .git, dist, build, .next, out, coverage, uploads, public,
+              __pycache__, .cache, migrations, generated]
+ignore_globs: ["*.env*", "*.lock", "*.min.*", "*.map", "*.log", "*.d.ts", "*.spec.*", "*.test.*"]
+
+# โฟลเดอร์ที่มักมีกติกาให้ทดสอบ (โครง Nest: modules/dto/entities · โครง Next: app/modules/services)
+signal_dirs: [modules, services, controllers, dto, entities, guards, decorator, permission,
+              prisma, app, components, lib, store, middleware, validation, validators, schema]
+
+max_files: 25
+max_total_chars: 120000

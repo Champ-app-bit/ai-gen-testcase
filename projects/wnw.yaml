@@ -41,6 +41,10 @@ automation:
   # convention repo (ให้เคสใหม่ทำตามนี้):
   #   1 เคส/ไฟล์ · ชื่อ TC-<AREA>-<NN>_<slug>.robot · จัดใต้ tests/<feature>/<subfeature>/
   #   Tags: feature:<x> group:<y> [type:<z>] + TC-ID · Documentation มี "Evidence: file:line"
+  # schema: <module>: { dir: <path relative จาก automation.path>, prefix: TC-<AREA> }
+  # ⚠️ WNW: automation.path ชี้ ".../tests" อยู่แล้ว → dir จึงเป็น path ต่อจาก tests/
+  #    (ต่าง ERP/INVENTORY/WRE ที่ path ชี้ราก repo แล้ว dir = <suite>/tests) — กติกาเดียวกันคือ
+  #    "dir เป็น relative จาก automation.path เสมอ"
   areas:                                    # map ฟีเจอร์ → โฟลเดอร์ + prefix (ช่วยหา/ตั้งเลขต่อ)
     register: { dir: auth/register, prefix: TC-REG }
     login:    { dir: auth/login,    prefix: TC-LOGIN }
@@ -49,6 +53,25 @@ automation:
     cart:     { dir: cart,          prefix: TC-CART }
     payment:  { dir: payment,       prefix: TC-PAY }
     tracking: { dir: tracking,      prefix: TC-TRK }
+
+# ─────────────────────────────────────────────────────────────────────
+# discovery — บอก /module-scout ว่า "module ของ stack นี้อยู่ตรงไหน" (portable, ไม่มี path เครื่อง)
+# ยืนยันแล้ว 2026-08-26: FE src/app/* = 39 route · BE Laravel 2 app (web 20 Controller · erp 17)
+# ─────────────────────────────────────────────────────────────────────
+discovery:
+  modules:
+    - { side: fe, root_match: frontend, glob: "src/app/*", name_from: dirname }
+    - { side: be, root_match: backend,  glob: "*/app/Http/Controllers/*Controller.php",
+        name_from: basename, strip_suffix: "Controller.php", label_with_parent: true }
+  pair_by: route                # FE route ↔ BE controller ชื่อไม่ตรง — ไล่จาก src/api → routes/api.php
+  # exclude = "ไม่ใช่ฟีเจอร์" เท่านั้น · หน้า content นิ่ง (about-us/faqs/privacy-policy/how-to-order)
+  # ให้เข้าทะเบียนแล้ว mark risk: skip พร้อมเหตุผล จะได้เห็นว่ารู้จักแต่ตั้งใจไม่ทำ
+  exclude: ["[...slug]", theme, Controller.php, Base.php]
+  notes: >
+    WNW ทำ /gen-testcases ครบทั้งเว็บแล้ว 15 ไฟล์ใน docs/generated/ — scout ควรเจอว่า module ส่วนใหญ่
+    มี draft เทสเคสอยู่แล้ว (spec_hits) เหลือแค่สาย /gen-automation
+    · FE มี route ตระกูล line/openline หลายตัวที่เป็น redirect ล้วน → risk: skip
+
 
 # นามสกุลไฟล์ที่อ่าน
 include_ext: [.ts, .tsx, .js, .jsx, .py, .php, .go, .java, .vue]

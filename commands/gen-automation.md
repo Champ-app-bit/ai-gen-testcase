@@ -1,6 +1,6 @@
 ---
 description: สร้าง Robot Framework automation suite จากไฟล์เทสเคส — scaffold โครง POM จาก template + ground locator/endpoint จากโค้ดจริง + dry-run จนผ่าน
-argument-hint: <path ไฟล์ testcase (.md) หรือชื่อ module> [--project <ชื่อ config>] [--suite <ชื่อโฟลเดอร์ suite>]
+argument-hint: <path ไฟล์ testcase (.md) หรือชื่อ module> [--project <ชื่อ config>] [--suite <ชื่อโฟลเดอร์ suite>] [--unattended]
 allowed-tools: Read, Grep, Glob, Write, Edit, Bash, AskUserQuestion
 ---
 
@@ -61,6 +61,26 @@ allowed-tools: Read, Grep, Glob, Write, Edit, Bash, AskUserQuestion
    - `docs/DataRequest-<module>.md` — seed/สิทธิ์/ข้อมูลที่ automation ต้องได้จากทีมก่อนรันจริงครบ (ตามแพทเทิร์น QA-DataRequest ของ suite เดิม)
 
 8. **สรุปให้ผู้ใช้**: สร้างกี่ไฟล์ / เทสกี่เคสจากทั้งหมดกี่เคสในไฟล์เทสเคส, dry-run ผล, backlog เคสที่ทำไม่ได้ + เหตุผล, สิ่งที่ผู้ใช้ต้องทำต่อ (เติม users.json จาก example, ตั้ง secrets CI, ตอบ data-request, รันจริงครั้งแรก)
+
+## โหมด `--unattended` (ถูกเรียกโดย `/gen-batch`)
+
+เมื่อมี flag นี้ในอาร์กิวเมนต์ ให้เปลี่ยนพฤติกรรมดังนี้ — เป้าหมายคือ **ห้ามหยุดรอคน**:
+
+- **ห้ามใช้ AskUserQuestion และห้าม "ถามแล้วหยุดรอ" ทุกกรณี**
+- เจอจุดที่ไม่ชัด → เขียนคำถามต่อท้าย `<batch.dir>/questions/<module>.md` (สร้างไฟล์/โฟลเดอร์ได้)
+  รูปแบบ 1 ข้อ = 1 บรรทัดตาราง: `| คำถาม | ตัวเลือก (a/b/Y-N) | สมมติฐานที่ใช้ไปก่อน | ผลถ้าสมมติฐานผิด | Evidence file:line |`
+  แล้ว **ทำงานต่อภายใต้สมมติฐานนั้น** โดยเขียนกำกับไว้ในผลงานทุกที่ที่ใช้
+- `<batch.dir>` = `batch.dir` ใน local config ถ้าไม่ตั้ง = `<ราก repo automation>/docs/batch`
+- **ข้อมูลที่ขาดจนทำไม่ได้จริงๆ** (เช่น path ไม่มีอยู่) → ทำส่วนที่เหลือให้ครบก่อน แล้วรายงานว่าส่วนไหนทำไม่ได้เพราะอะไร
+  **ห้าม block ทั้งงานเพราะบางส่วนขาด** และ **ห้ามเดาแล้วเขียนเหมือนรู้จริง**
+- รายงานผลตอนจบให้สั้นและเป็นข้อเท็จจริง (orchestrator เอาไปใช้ต่อ ไม่ใช่คนอ่าน): ไฟล์ที่เขียน, จำนวนที่ได้, คำถามที่เข้าคิวกี่ข้อ, สิ่งที่ทำไม่ได้
+- ค่าที่ปกติจะถาม ให้ **หาจากของจริงก่อนเสมอ** แล้วค่อยเข้าคิวคำถามถ้าหาไม่เจอ:
+  - ชื่อ suite → `<module>_robot` ตาม convention ของ repo (ดูจาก suite ที่มีอยู่)
+  - BASE_URL / API prefix → คัดลอกจาก `resources/variables/env_*.yaml` ของ suite อื่นใน repo เดียวกัน + grep route จาก BE
+  - creds → **ห้ามขอ ห้ามเดา** ใช้ `users.json.example` + data gate ตามปกติ (เทสที่ต้องใช้ให้ Skip พร้อมเหตุผล)
+- เคสที่ข้อมูลไม่พอ → ข้ามเคสนั้น ใส่ backlog พร้อมเหตุผล **แต่ต้องทำเคสที่เหลือให้ครบ**
+- **dry-run ต้องรันจริงและต้องเขียวก่อนจบงาน** — ถ้าติดตั้ง deps ไม่ได้/รันไม่ได้ ให้รายงานตรงๆ ว่ายังไม่ได้ dry-run
+  ห้ามข้ามแล้วรายงานว่าเสร็จ
 
 ## ข้อกำหนด
 - **ตอบและเขียน doc เป็นภาษาไทย** (โค้ด/keyword เป็นอังกฤษตาม convention)

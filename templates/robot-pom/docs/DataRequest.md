@@ -2,7 +2,7 @@
 
 <!-- Rename this file to QA-ERP-{{MODULE}}-Automation-DataRequest.md when scaffolding. -->
 
-เอกสารนี้รวม "ของที่ยังขาด" เพื่อให้ suite `{{MODULE}}_robot` รันได้เต็มชุด — เทสทุกตัว
+เอกสารนี้รวม "ของที่ยังขาด" เพื่อให้ suite `erp_{{MODULE}}_robot` รันได้เต็มชุด — เทสทุกตัว
 "gate-then-skip": พอเติมข้อมูล + set `_status: ready` แล้วมันจะรันเองทันที ไม่ต้องแก้โค้ดเทส.
 
 Baseline ปัจจุบัน (staging, YYYY-MM-DD): <!-- TODO(generated): N เทส — x pass / y fail / z skip -->

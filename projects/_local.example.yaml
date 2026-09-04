@@ -17,3 +17,7 @@ behavior_spec:                                            # (optional) ใช้
 #   extra: /ABSOLUTE/PATH/TO/project-qa-heuristics.md     # เว้นไว้ = ใช้แค่ references/ กลาง (แนะนำสำหรับส่วนใหญ่)
 graph:
   path: /ABSOLUTE/PATH/TO/automation-repo/graphify-out/graph.json   # (optional) Graphify code map, gitignored
+# (optional) batch orchestration — ที่เก็บทะเบียน module + สถานะงานของ /module-scout และ /gen-batch
+# เว้นไว้ = ใช้ดีฟอลต์ <ราก repo automation>/docs/batch/
+batch:
+  dir: /ABSOLUTE/PATH/TO/automation-repo/docs/batch

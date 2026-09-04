@@ -91,6 +91,26 @@
 
 รายงานผลต้องบอกเสมอว่าอยู่บันไดขั้นไหน — "dry-run ผ่าน" ≠ "เทสใช้งานได้"
 
+## 7.1 กับดักของ oracle/driver ที่เจอซ้ำทุกโปรเจกต์ (universal)
+
+บทเรียนที่ทำให้เทส "เขียวแบบไม่ได้พิสูจน์อะไร" หรือ "แดงโดยไม่ใช่บั๊ก" — เช็กก่อนเขียนเคสแนวนี้:
+
+- **widget ที่เป็น wrapper ของ JS lib ภายนอก ต้องขับผ่าน lib นั้น** ไม่ใช่ผ่าน API ของ Selenium
+  (`Select From List`, `Click`) — lib มักฟัง event ที่ตัวเองสร้าง เช่น jQuery-based select ฟังเฉพาะ
+  `change` ที่ trigger จาก jQuery ⇒ การเลือกผ่าน Selenium จะ **เงียบ ไม่ error และไม่มีผล**
+- **guard ที่ทำงานที่ระดับ keystroke ทดสอบด้วยการ set value ไม่ได้** — directive/handler ที่กรอง input
+  ที่ event `keypress`/`keydown` แล้ว `preventDefault` จะถูกข้ามทั้งหมดเมื่อเซ็ตค่าด้วย JS
+  ⇒ เคสที่ **ตัวการกรองคือสิ่งที่ทดสอบ** ต้องพิมพ์จริง (`Press Keys`) แม้โปรเจกต์จะมีกติกาว่า
+  "พิมพ์ผ่าน keyword JS เสมอ" — และต้องเขียนเหตุผลกำกับไว้ในเทส ไม่งั้นคนถัดไปจะ "แก้กลับ"
+- **หน้าจอที่แสดง "ไม่มีข้อมูล" ทั้งกรณีค้นไม่พบและกรณีโหลดล้มเหลว** = oracle ที่ assert ข้อความเดียว
+  จะ **false-pass เมื่อ API ล่ม** ⇒ เคสลิสต์ต้องยืนยันจำนวนแถว/ยอดรวมจาก API ประกอบ ไม่ยึดข้อความเดียว
+- **ฟอร์มที่มี input ซ้อนกัน 2 ตัวต่อ field เดียว** (widget ที่มองเห็น + hidden input ที่ validation อ่าน)
+  ทำให้ `following::input[1]` ชี้ผิดตัว ⇒ เจาะชนิด element ที่ต้องการ (`textarea`/`select`/`@placeholder`)
+- **label ที่ซ้ำกันหรือเป็น prefix ของกันเอง** ในหน้าเดียว ⇒ ต้อง index หรือเทียบ `normalize-space()=` แบบ
+  เท่ากันเป๊ะ · **label/ข้อความที่สะกดผิดในโค้ดจริง ให้ใช้ตามที่ผิด** และบันทึกไว้ว่าเป็นการตั้งใจ
+- **ตรวจ signature ของ keyword กลางก่อนส่ง argument เพิ่ม** — keyword ที่ไม่มีช่องข้อความ failure หรือ
+  ไม่รับ `timeout=` จะพังตอน dry-run เท่านั้น (ไม่ใช่ตอนรันจริง) ⇒ `--dryrun` ทุกครั้งหลังเขียนชุดใหม่
+
 ## 8. CI (GitHub Actions)
 
 - 1 suite = 1 workflow (`erp-<module>-e2e.yml` ที่ราก repo, ใช้ `defaults.run.working-directory`)

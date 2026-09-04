@@ -5,6 +5,12 @@
 ## สิ่งที่ต้องมีก่อน
 - **Claude Code** (CLI) + บัญชี Claude Pro/Max
 - **repo ของเว็บที่จะทดสอบ** clone ไว้ในเครื่อง (product code) และ **repo automation** (ถ้ามี) — ถ้ายังไม่มี `/setup` จะช่วย clone ให้
+- *(optional)* **Graphify** — code knowledge graph ที่ `/gen-behavior-spec` / `/gen-testcases` ใช้ไล่สาย `page → api → controller` ก่อน grep
+  ```bash
+  pip3 install --user graphifyy   # ⚠️ ชื่อ package สะกด y สองตัว · ลงครั้งเดียวต่อเครื่อง ใช้ได้ทุก project
+  graphify --version              # ถ้า command not found: export PATH="$HOME/.local/bin:$PATH"
+  ```
+  ไม่ลงก็ทำงานได้ครบ — คำสั่งจะถอยไปใช้ grep เอง (คุ้มเมื่อทำโมดูลใหญ่ที่เรียกข้ามไฟล์หลายชั้น)
 
 ## 4 ขั้นตอน
 

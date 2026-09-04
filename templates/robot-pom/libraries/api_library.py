@@ -111,6 +111,18 @@ class api_library:
         resp = requests.get(self._url(path), headers=self._headers(authed), timeout=float(timeout), verify=False)
         return self._wrap(resp)
 
+    def api_get_raw(self, path, authed=True, static_token=None, timeout=30):
+        """Auth-test escape hatch: like api_get but the X-Authorization static token can be
+        overridden (wrong value) or dropped (static_token=None) — needed to prove the SECOND
+        auth layer is enforced independently of the bearer (authenMiddleware.js:18-20)."""
+        headers = {}
+        if static_token is not None:
+            headers["X-Authorization"] = static_token
+        if authed and self._bearer:
+            headers["Authorization"] = self._bearer
+        resp = requests.get(self._url(path), headers=headers, timeout=float(timeout), verify=False)
+        return self._wrap(resp)
+
     def api_post_json(self, path, payload=None, authed=True, timeout=30):
         resp = requests.post(
             self._url(path), json=self._as_payload(payload), headers=self._headers(authed), timeout=float(timeout), verify=False

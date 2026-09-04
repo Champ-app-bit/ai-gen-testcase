@@ -18,11 +18,49 @@ automation:
   framework: robot
   layout: multi-suite            # ราก repo มีหลาย <module>_robot อยู่ข้างกัน
   conventions: docs/CONVENTIONS.md   # gotcha เฉพาะ ERP — relative จากราก repo automation
+  # schema: <module>: { dir: <path relative จาก automation.path>, prefix: TC-<AREA> }
+  # ⚠️ ต้องเป็น {dir, prefix} ทุกตัว — /gen-batch อ่าน prefix เพื่อตั้งเลข TC-ID ต่อ และเขียน entry ใหม่กลับเข้ามาเอง
   areas:
-    order_v3: erp_order_v3_robot/tests
-    payment: erp_payment_robot/tests
-    delivery: erp_delivery_robot/tests
+    order_v3:          { dir: erp_order_v3_robot/tests,          prefix: TC-ORD }   # ⚠️ ORD ไม่ใช่ OV3
+    # ⚠️ `order` (ของเก่า /order + /order_new) คนละระบบกับ `order_v3` — route live ทั้งคู่
+    #    prefix TC-OR1 มาจาก area: OR1 ใน modules.yaml · ยังรอผู้ใช้ยืนยัน (questions/order.md Q23)
+    order:             { dir: erp_order_robot/tests,             prefix: TC-OR1 }
+    payment:           { dir: erp_payment_robot/tests,           prefix: TC-PAY }
+    issue:             { dir: erp_issue_robot/tests,             prefix: TC-ISS }   # แจ้งปัญหา/เคลม · scaffold 2026-09-01
+    delivery:          { dir: erp_delivery_robot/tests,          prefix: TC-DEL }
+    # ตระกูล supplier — 1 module = 1 suite ตาม references/robot-conventions.md §1
+    # (แยก suite เพราะแต่ละตัวมี route / API prefix / TC prefix / CI workflow ของตัวเอง)
+    supplier:          { dir: erp_supplier_robot/tests,          prefix: TC-SUP }   # ข้อมูลซัพพลายเออร์ (master) · scaffold 2026-08-07
+    # ⚠️ FE app ชื่อ supplier_contact แต่เนื้อหาคือ "สัญญาซัพพลายเออร์" (route /supplier-contract,
+    #    BE app/ab_supplier_contract → ตาราง ab_contracts) — มี upload ไฟล์สัญญา + filter 3 ชั้น
+    supplier_contact:  { dir: erp_supplier_contract_robot/tests, prefix: TC-SUC }   # สัญญาซัพพลายเออร์
+    supplier_location: { dir: erp_supplier_location_robot/tests, prefix: TC-SML }   # ผูกพื้นที่ส่งของ+ค่าส่ง
+    store:             { dir: erp_store_robot/tests,             prefix: TC-STR }   # ข้อมูลร้านค้า (master) · scaffold 2026-08-13
+    # ⚠️ หน้า "กำหนดสิทธิ์การเข้าร้าน" (/store/permission/:id) ยังไม่อยู่ใน suite —
+    #    สเปกยังเป็น draft (behavior-spec/draft/store-permission.md เหลือ 5 คำถาม)
+    promotion:         { dir: erp_promotion_robot/tests,         prefix: TC-PRM }   # โปรโมชัน/ส่วนลด · scaffold 2026-09-02 โดย /gen-batch
+    # -- วางแผนไว้แต่ยังไม่ scaffold (โฟลเดอร์ยังไม่มีจริงในราก repo) --
+    supplier_product:  { dir: erp_supplier_product_robot/tests,  prefix: TC-SMP, planned: true }  # ผูกสินค้า+ต้นทุน
+    store_supplier:    { dir: erp_store_supplier_robot/tests,    prefix: TC-SMS, planned: true }  # ตารางผูกร้าน × ซัพพลายเออร์
   # ⚠️ ERP ยังไม่มี spec docs (sources.specs) — ใช้ behavior_spec.confirmed_dir แทน
+
+# ─────────────────────────────────────────────────────────────────────
+# discovery — บอก /module-scout ว่า "module ของ stack นี้อยู่ตรงไหน" (portable, ไม่มี path เครื่อง)
+# ยืนยันแล้ว 2026-08-26: FE src/apps/* = 48 · BE app/ab_* = 45
+# ─────────────────────────────────────────────────────────────────────
+discovery:
+  modules:
+    - { side: fe, root_match: frontend, glob: "src/apps/*", name_from: dirname }
+    - { side: be, root_match: api,      glob: "app/ab_*",   name_from: dirname, strip_prefix: "ab_" }
+  pair_by: name                 # customer ↔ ab_customer (หลัง strip prefix)
+  # exclude = "ไม่ใช่ฟีเจอร์" เท่านั้น (โครงสร้าง/ไฟล์ขยะ)
+  # ฟีเจอร์จริงที่ไม่คุ้ม automate (dashboard/report/profile) ห้ามใส่ตรงนี้ —
+  # ให้เข้าทะเบียนแล้ว mark risk: skip พร้อมเหตุผล จะได้เห็นว่า "รู้จักแต่ตั้งใจไม่ทำ"
+  exclude: [assets, components, shared, utils, services, modules, config, middleware,
+            "3 Moudles.zip"]
+  notes: >
+    ชื่อโฟลเดอร์ FE โกหกได้ (supplier_contact = สัญญา ไม่ใช่ผู้ติดต่อ) — ยืนยันจาก route + BE ทุกครั้ง
+    · order_v3 ใหญ่มาก (38 ไฟล์) ต้องแตก sub-module
 
 # Vue 2 (.vue) + Express (.js) — ปรับให้เข้ากับ ERP
 include_ext: [.vue, .js, .ts, .jsx, .tsx]
@@ -36,3 +74,22 @@ signal_dirs: [apps, modules, views, components, services, routes, middleware,
 
 max_files: 25
 max_total_chars: 120000
+
+# ── เฟส 5: รันเทสจริงกับ env (ใช้โดย ./testgen --run-only / --all) ──────────
+# {stamp} ถูกแทนด้วย auto-<วันเวลา> ทำให้ผลแต่ละรอบไม่ทับกันและเทียบย้อนได้
+# requires_env: ขาดตัวใดตัวหนึ่ง = ข้ามทั้งเฟส ไม่ยิง (กันได้ผลแดงจาก credential ไม่ใช่จากบั๊ก)
+run:
+  # ขั้นเตรียม: เติม credential ลง users.json จาก env var (ขั้นเดียวกับที่ CI ทำก่อนรัน robot)
+  # ไม่ทำ = users.json ยังเป็น _status:todo แล้วเทสที่ต้องล็อกอินจะ SKIP ทั้งชุดแบบเงียบ ๆ
+  prepare: python3 scripts/write_users_json.py
+  # ไม่ใส่ --skiponfailure known-bug ต่างจาก CI โดยเจตนา:
+  # flag นั้นเปลี่ยนเทสแดงเป็น SKIP ซึ่งกลืน oracle ที่พังไปด้วย (CONVENTIONS §6.2.1)
+  # รายงานวินิจฉัยต้องเห็นของจริง จะแดงกว่า CI แต่แดงอย่างซื่อสัตย์
+  cmd: robot --pythonpath libraries --variablefile resources/variables/env_dev.yaml --outputdir results/{stamp} tests
+  requires_env: [ERP_ADMIN_USER, ERP_ADMIN_PASS]
+  timeout: 3600
+  # กันไม่ให้เข้าเฟส 5 — พิสูจน์แล้ว 2026-09-01 ว่า route /order บน staging ตอบ 404
+  # (build staging 2026-07-31 ถอดหน้านี้ออกแล้ว แทนด้วย /order_v3 · FE repo ในเครื่องยังเป็น 2026-07-02)
+  # ถ้าปล่อยรัน จะได้เทสแดง 78 เคสจาก 404 ไม่ใช่จากบั๊ก → รายงานอ่านไม่ได้
+  # เอาออกได้เมื่อ pull FE ใหม่แล้วตอบคำถามเรื่อง route (/testgen erp --answer)
+  exclude_suites: [erp_order_robot]

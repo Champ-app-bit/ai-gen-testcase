@@ -13,21 +13,40 @@
 ## 2 วิธีใช้งาน
 
 ### วิธี A (แนะนำ) — Claude Code + Claude Pro ✨ ไม่เปลือง API
-ใช้ slash command `/gen-testcases` — Claude อ่านโค้ดใน repo ปัจจุบันเอง (agentic) แล้วออกเทสเคส
-โดยใช้โควตา **Claude Pro/Max ของคุณ ไม่คิดเงินต่อ token** เหมาะกับงาน on-demand ที่คนนั่งรันเอง
+
+**จำคำสั่งเดียวพอ: `/testgen`** — มันดูสถานะเองว่า project นี้อยู่ขั้นไหน แล้วพาไปขั้นถัดไปให้
 
 ```bash
 # ติดตั้งครั้งเดียว (global — ใช้ได้ทุก repo)
+git clone <repo นี้> && cd ai-gen-testcase
 pip3 install --user graphifyy
-cp commands/gen-testcases.md ~/.claude/commands/
+cp commands/*.md ~/.claude/commands/
 
-# ใช้งาน: เข้า repo เว็บไหนก็ได้ แล้วเปิด Claude Code
-cd <repo เว็บที่จะทดสอบ>
-claude
-# ในหน้าต่าง claude พิมพ์:
-/gen-testcases ระบบใส่คูปองส่วนลด ยอดขั้นต่ำ 500 บาท ใช้ได้ครั้งเดียวต่อคน
+# เปิด claude แล้วพิมพ์:
+/testgen                          # ดูว่ามี project อะไรบ้าง แต่ละตัวไปถึงไหนแล้ว
+/testgen ~/Web/myproject          # เพิ่ม project ใหม่ — ชี้แค่ path ที่เหลือมันทำเอง
+/testgen myproject                # ไปต่อจากจุดที่ค้างไว้
 ```
-Claude จะ grep/อ่านโค้ดที่เกี่ยว → สรุปกติกา → เขียนเทสเคสลง `docs/generated/` พร้อมอ้าง `file:line`
+
+**project ใหม่ไม่ต้องเขียน config เอง** — `scripts/bootstrap_project.py` ตรวจ stack จาก marker file
+(NestJS · Next App/Pages · Vue 2/3 · Laravel รวม monorepo · Express · Django · Spring)
+แล้วเขียน `include_ext` / `ignore_dirs` / `signal_dirs` / `discovery` ให้เอง โดย**ทดสอบ glob กับดิสก์จริงก่อนเขียน**
+พร้อมตรวจเคสที่คนมักพลาด: marker อยู่ในลูก (monorepo) และ prefix ร่วมของชื่อโฟลเดอร์ (`ab_customer` → `customer`)
+
+> ทดสอบย้อนกลับกับ 3 โปรเจกต์ที่เคยเขียน config ด้วยมือ (Vue2+Express · NestJS+Next · Next+Laravel monorepo)
+> — bootstrap เดา `discovery` ออกมาตรงกับที่คนเขียนทั้งสามตัว
+
+คำสั่งย่อยยังเรียกตรงได้ถ้าอยากคุมเอง:
+
+| คำสั่ง | ทำอะไร |
+|---|---|
+| `/setup <p>` | ผูก path บนเครื่องนี้ (สร้าง config ให้ถ้ายังไม่มี) |
+| `/module-scout <p>` | ออกทะเบียน module + AREA code + อันดับความเสี่ยง |
+| `/gen-behavior-spec <m> --project <p>` | ร่างสเปกจากโค้ด (ทุกข้อ tag ✅/❓/🚩) |
+| `/gen-testcases <ฟีเจอร์> --project <p>` | ออกแบบเทสเคส (3-way grounding) |
+| `/gen-automation <ไฟล์> --project <p>` | สร้าง Robot suite |
+| `/verify-suite <m> --project <p>` | ตรวจว่า suite ที่ได้ไม่ได้มั่ว |
+| `/gen-batch <p>` | ปล่อยรันทั้ง project ทีละ module |
 
 ### วิธี B — สคริปต์ Python + Gemini API (automation / clone จาก Azure)
 เหมาะเมื่อต้องการดึง repo จาก git remote อัตโนมัติ หรือรันแบบไม่โต้ตอบ — ดูรายละเอียดด้านล่าง
@@ -94,6 +113,75 @@ cp commands/gen-automation.md ~/.claude/commands/
 **Flow เต็มของ pipeline:** `/setup` → `/gen-behavior-spec` (ร่าง+ยืนยัน spec) → `/gen-testcases`
 (backlog เคสที่ยังไม่ automate) → `/gen-automation` (แปลง backlog เป็น suite ที่รันได้)
 
+## ทะเบียน module — รู้ว่า "ทั้งเว็บมีอะไรบ้าง ทำอะไรก่อน" (`/module-scout`)
+
+ปัญหาเวลาเอาเครื่องมือนี้ไปใช้จริง: 1 เว็บมี 30–70 module ต้องมานั่งเปิดดูเองว่ามีอะไร แล้วไล่ทำทีละตัว
+`/module-scout` สแกนให้ครบทั้งโปรเจกต์ในครั้งเดียว แล้วออก **ทะเบียนงาน** ที่มีสถานะติดตามได้
+
+```bash
+cp commands/module-scout.md ~/.claude/commands/     # ติดตั้งครั้งเดียว
+/module-scout inventory                             # ในหน้าต่าง claude
+```
+
+ได้ `<repo automation>/docs/batch/modules.yaml` + `modules.md`:
+ทุก module พร้อม **AREA code** (prefix ของ TC-ID, ไม่ชนกัน), **อันดับความเสี่ยง** พร้อมเหตุผลที่เป็นตัวเลขจริง,
+จำนวน endpoint แยก verb, suite ที่ scaffold แล้ว (นับ `.robot` บนดิสก์ → `status: done`) และธง
+`oversized` / `wip_signals` / `unclear_mutation` / `unpaired`
+
+**ทำงานกับ stack ไหนก็ได้** — ความรู้ว่า "module อยู่ตรงไหน" อยู่ใน `discovery:` ของ `projects/<project>.yaml`
+ครั้งแรกคำสั่งจะเดาจาก `references/module-discovery.md` แล้วให้คุณยืนยัน จากนั้นบันทึกไว้ใช้ตลอด:
+
+```yaml
+discovery:                                    # ตัวอย่าง: NestJS + Next.js
+  modules:
+    - { side: be, root_match: backend,  glob: "src/modules/*",     name_from: dirname }
+    - { side: fe, root_match: frontend, glob: "src/app/modules/*", name_from: dirname }
+  pair_by: name                               # name | route | manual
+  exclude: [shared, common]
+```
+
+ส่วนที่เป็น "งานนับ" ทำโดย `scripts/scan_modules.py` (deterministic ไม่ใช้ AI ไม่เปลืองโควตา — รันซ้ำได้ตลอด
+**merge ไม่ทับ** `status`/`area`/`suite`/note ที่คุณแก้ไว้) ส่วนที่ต้องใช้วิจารณญาณ — ชื่อ module ที่โกหก,
+module ที่ยังไม่เสร็จ, การแตก sub-module, การเชื่อม FE↔BE ที่ชื่อไม่ตรง — เป็นหน้าที่ของ agent
+
+> เกณฑ์คะแนน + ที่มาของสูตร (ทำไมต้องเป็นความหนาแน่น × พื้นที่ผิว mutation แล้วจัดอันดับเทียบกันเอง)
+> อยู่ใน `references/module-discovery.md` §5
+
+## ปล่อยรันทั้ง project (`/gen-batch`) + ตัวตรวจ (`/verify-suite`)
+
+`/gen-batch <project>` = **สั่งทีเดียว ไล่ทำทีละ module จนจบ** โดยไม่ต้องนั่งเฝ้า
+มันไม่ได้ทำงานเองในบทสนทนาเดียว แต่ **spawn subagent 1 ตัวต่อ module ต่อ stage** แล้วเดินสายพาน:
+
+```
+spec → testcases → automation → verify → done      (ต่อ 1 module)
+ └ /gen-behavior-spec  └ /gen-testcases  └ /gen-automation  └ /verify-suite
+```
+
+**3 อย่างที่ทำให้ปล่อยรันได้จริง:**
+
+| กลไก | แก้ปัญหาอะไร |
+|---|---|
+| **สมุดคุมงานอยู่ในไฟล์** (`modules.yaml` + `scripts/batch_state.py`) | โดน quota ตัดกลางทาง / ปิดเครื่อง → สั่ง `/gen-batch <p>` ใหม่ ไปต่อจากเดิม ไม่ทำซ้ำ |
+| **คิวคำถาม** (`--unattended`) | agent ห้ามหยุดถาม — เขียนคำถาม + สมมติฐานที่ใช้ไปก่อนลง `questions/<module>.md` แล้วทำต่อ · คนตอบครั้งเดียวตอนจบแทนถูกขัด 300 ครั้ง |
+| **readiness level** | project ที่ยังไม่เคยมี suite (L1) จะถูกบังคับทำ **PILOT 1 module แบบมีคนเฝ้า** ก่อน แล้ว freeze convention — ไม่งั้นได้ 30 suite ที่ผิดเหมือนกันหมด |
+
+```bash
+cp commands/gen-batch.md commands/verify-suite.md ~/.claude/commands/
+
+/gen-batch erp --limit 3          # ทำ 3 module ที่เสี่ยงสุดที่ยังไม่ได้ทำ
+/verify-suite payment --project erp --testcases <ไฟล์ .md>   # ตรวจ suite เดี่ยวๆ
+python3 scripts/batch_state.py report erp                    # ดูว่าทำถึงไหนแล้ว
+```
+
+**`/verify-suite` = ตัวปฏิปักษ์** ตั้งสมมติฐานว่า *"suite นี้ยังพิสูจน์อะไรไม่ได้จนกว่าจะพิสูจน์ได้"*
+`scripts/verify_suite.py` ตรวจส่วนที่ฟันธงได้: placeholder ค้าง · TC-ID ซ้ำ/prefix ปนกัน ·
+`Evidence: file:line` **ที่ชี้ไฟล์และบรรทัดที่มีอยู่จริง** · locator ที่มีที่มา · **เทส stub ที่ dry-run เขียวแต่ไม่ได้ assert อะไร** ·
+1 เคส/ไฟล์ · creds หลุด · **เคสที่หายไปเทียบกับไฟล์เทสเคสต้นทาง**
+ส่วนที่ต้องใช้ตา — locator ชี้ element ถูกตัวไหม, oracle false-pass ไหม — เป็นงานของ agent
+
+> ⚠️ `--dryrun` เขียว = ขั้นที่ 1 ของบันไดความเชื่อมั่นเท่านั้น (`references/robot-conventions.md` §7)
+> **ยังไม่ได้พิสูจน์กับระบบจริง** — ทุกสรุปของ batch จะย้ำข้อนี้เสมอ
+
 ## คลัง QA heuristics (ground เพิ่ม — ใช้ได้ทุกเว็บ)
 `references/` เก็บความรู้ QA ที่ **เป็นกลางกับทุกเว็บ/ทุก stack** ให้ `/gen-testcases` และ `/gen-behavior-spec` อ่านเป็น checklist กันตกหล่น (ไม่เรียก API — เป็นแค่ไฟล์อ่าน):
 - `references/tester-heuristics.md` — เทคนิค (EP/BVA/Decision Table/State Transition/Pairwise) + มุม cross-cutting (validation parity, authz matrix, concurrency, error/enumeration, rate limit, security)
@@ -109,8 +197,33 @@ business rule (logic คูปอง/ค่าส่ง → decision table), enu
 ## ติดตั้ง
 
 ```bash
+# วิธี A (slash command) — ไม่ต้องติดตั้งอะไรเลยนอกจากก๊อป command
+cp commands/*.md ~/.claude/commands/
+
+# วิธี B (สคริปต์ python + API) เท่านั้นที่ต้อง:
 pip install -r requirements.txt
 ```
+
+### (optional) Graphify — ground #0 code knowledge graph
+
+```bash
+pip3 install --user graphifyy   # ⚠️ package สะกด y สองตัว (คำสั่งที่ได้ชื่อ graphify)
+graphify --version              # command not found → export PATH="$HOME/.local/bin:$PATH"
+```
+
+**ลงครั้งเดียวต่อเครื่อง ใช้ได้ทุก project** · ไม่ต้องมี API key (`graphify update` เป็น AST parse ล้วน ไม่เรียก LLM)
+· ที่มา: [safishamsi/graphify](https://github.com/safishamsi/graphify) (MIT, third-party)
+
+| ใครใช้ | ใช้ทำอะไร |
+|---|---|
+| `/setup` | **สร้าง** กราฟ (`graphify update <sources.code>`) แล้วย้าย `graphify-out/` เข้า repo automation ตาม `graph.path` ใน `*.local.yaml` |
+| `/gen-behavior-spec` · `/gen-testcases` | **อ่าน** กราฟ (`graphify explain` / `graphify path`) เพื่อไล่สาย `page → component → api → controller` ก่อน grep — กันหลง endpoint / กันตกหล่น |
+
+**ไม่ติดตั้งก็ใช้งานได้ครบ** — `/setup` ข้ามขั้นนี้เงียบๆ และคำสั่ง gen ถอยไปใช้ grep/Glob แทน
+คุ้มกับโมดูลใหญ่ที่เรียกข้ามไฟล์หลายชั้น · โมดูล CRUD เล็กๆ grep ตรงๆ ก็พอ
+
+> `graphify-out/` ถูก gitignore (cache ที่ rebuild ได้ + เก่าทันทีที่โค้ดเปลี่ยน) ⇒ **เครื่องใหม่ต้อง build เอง** (~30 วิ ต่อ repo)
+> และต้องรัน `graphify update` ซ้ำทุกครั้งที่ pull โค้ดใหม่ ไม่งั้นกราฟจะชี้ไป node ที่ย้าย/หายไปแล้ว
 
 ## ตั้ง credential (ครั้งเดียว)
 

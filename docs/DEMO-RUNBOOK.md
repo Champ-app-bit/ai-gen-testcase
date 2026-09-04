@@ -335,6 +335,7 @@ robot --dryrun --pythonpath libraries --variablefile resources/variables/env_dev
 # ── ติดตั้ง (เครื่องใหม่) ─────────────────────────────────────────
 git clone <tool-repo> && cd ai-gen-testcase
 cp commands/*.md ~/.claude/commands/
+pip3 install --user graphifyy       # optional — code graph (ครั้งเดียวต่อเครื่อง); ไม่ลงก็ใช้ grep แทน
 
 # ── pipeline เต็ม (ในหน้าต่าง claude) ─────────────────────────────
 # /setup erp

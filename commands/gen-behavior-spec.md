@@ -1,6 +1,6 @@
 ---
 description: reverse-engineer "draft behavior spec" จากโค้ด+กราฟ ต่อ module — ทุกข้อ tag ✅/❓/🚩 + file:line พร้อมแบบฟอร์มคำถามให้ user ยืนยันก่อน promote เป็น spec จริง
-argument-hint: <module/ฟีเจอร์ เช่น reset-password> [--project <ชื่อ config>] | promote <module> [--project <ชื่อ config>]
+argument-hint: <module/ฟีเจอร์ เช่น reset-password> [--project <ชื่อ config>] [--unattended] | promote <module> [--project <ชื่อ config>]
 allowed-tools: Read, Grep, Glob, Write, Bash
 ---
 
@@ -71,6 +71,26 @@ allowed-tools: Read, Grep, Glob, Write, Bash
 2. ถ้าไม่เหลือข้อ ❓/🚩 → เปลี่ยน `status: confirmed`, ใส่ `confirmed_by: <ชื่อ user> <วันที่>`, **ย้ายไฟล์ไป `behavior_spec.confirmed_dir`** (สร้างโฟลเดอร์ถ้ายังไม่มี)
 3. ถ้ายังเหลือ → คง `status: draft` ไว้ที่เดิม บอก user ว่าเหลือคำถามไหน
 4. แจ้งผู้ใช้: spec ที่ confirmed แล้วจะถูก `/gen-testcases` ใช้เป็น ground #2 อัตโนมัติ
+
+## โหมด `--unattended` (ถูกเรียกโดย `/gen-batch`)
+
+เมื่อมี flag นี้ในอาร์กิวเมนต์ ให้เปลี่ยนพฤติกรรมดังนี้ — เป้าหมายคือ **ห้ามหยุดรอคน**:
+
+- **ห้ามใช้ AskUserQuestion และห้าม "ถามแล้วหยุดรอ" ทุกกรณี**
+- เจอจุดที่ไม่ชัด → เขียนคำถามต่อท้าย `<batch.dir>/questions/<module>.md` (สร้างไฟล์/โฟลเดอร์ได้)
+  รูปแบบ 1 ข้อ = 1 บรรทัดตาราง: `| คำถาม | ตัวเลือก (a/b/Y-N) | สมมติฐานที่ใช้ไปก่อน | ผลถ้าสมมติฐานผิด | Evidence file:line |`
+  แล้ว **ทำงานต่อภายใต้สมมติฐานนั้น** โดยเขียนกำกับไว้ในผลงานทุกที่ที่ใช้
+- `<batch.dir>` = `batch.dir` ใน local config ถ้าไม่ตั้ง = `<ราก repo automation>/docs/batch`
+- **ข้อมูลที่ขาดจนทำไม่ได้จริงๆ** (เช่น path ไม่มีอยู่) → ทำส่วนที่เหลือให้ครบก่อน แล้วรายงานว่าส่วนไหนทำไม่ได้เพราะอะไร
+  **ห้าม block ทั้งงานเพราะบางส่วนขาด** และ **ห้ามเดาแล้วเขียนเหมือนรู้จริง**
+- รายงานผลตอนจบให้สั้นและเป็นข้อเท็จจริง (orchestrator เอาไปใช้ต่อ ไม่ใช่คนอ่าน): ไฟล์ที่เขียน, จำนวนที่ได้, คำถามที่เข้าคิวกี่ข้อ, สิ่งที่ทำไม่ได้
+- **ถ้ามีไฟล์ draft ของ module นี้อยู่แล้ว → สำรองก่อนเขียนทับเสมอ**
+  `cp <draft> <draft>.bak-<YYYY-MM-DD>.md` แล้วแจ้งใน report ว่าสำรองไว้ที่ไหน
+  (draft เก่าอาจมีคำตอบที่ user เขียนไว้เอง — โหมด unattended เขียนทับเงียบๆ = ทำของคนหาย
+   บทเรียนจริง: PILOT ของ inventory ทับ draft เดิมที่ยังไม่ถูก git track ไปแล้ว 1 ไฟล์)
+- **ห้าม promote อัตโนมัติเด็ดขาด** — ไม่ว่าคำถามจะเหลือกี่ข้อ draft ต้องคง `status: draft` ไว้เสมอ
+  (การเลื่อนขั้นเป็น spec ที่ยืนยันแล้ว เป็นอำนาจของคนเท่านั้น — ถ้าปล่อยให้ agent ยืนยันเอง บั๊กจะถูกบันทึกเป็น requirement)
+- ข้อ 🚩 ทุกข้อ ให้ต่อท้าย `<batch.dir>/findings.md` ด้วย (นอกเหนือจากในไฟล์ draft) เพื่อให้ dev เห็นรวมที่เดียว
 
 ## ข้อกำหนด
 

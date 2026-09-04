@@ -1,0 +1,69 @@
+# โปรเจกต์ WRE — Wreathmala (พวงหรีดออนไลน์) · Azure DevOps project: WRE
+name: WRE
+domain: "เว็บ e-commerce พวงหรีด/ดอกไม้งานศพ (Wreathmala) — frontend Next.js 14 App Router (TypeScript), backend monorepo Laravel/PHP (web + erp + backoffice + migrate_api)"
+lang: th
+tc_prefix: TC
+
+# git remote (URL สะอาด — ไม่ฝัง PAT; auth ผ่าน credential helper/PAT ตอน clone)
+# ⚠️ working copy บางเครื่องมี remote ที่ฝัง PAT ไว้ใน URL — ห้ามก๊อป URL แบบนั้นมาใส่ไฟล์นี้
+remotes:
+  code:
+    - https://dev.azure.com/app-bit/WRE/_git/frontend
+    - https://dev.azure.com/app-bit/WRE/_git/backend
+  # automation: ยังไม่มี remote ของ wre_automation_script (สร้าง local ไว้ก่อนโดย /setup wre)
+  #             ถ้าสร้าง remote แล้วให้เติม URL ตรงนี้
+
+# automation repo — หลาย suite ใน repo เดียว (1 module = 1 โฟลเดอร์ <module>_robot)
+# path จริงบนเครื่องอยู่ใน wre.local.yaml (automation.path ชี้ "ราก repo")
+automation:
+  framework: robot
+  layout: multi-suite            # ราก repo มีหลาย <module>_robot อยู่ข้างกัน
+  conventions: docs/CONVENTIONS.md   # gotcha เฉพาะ WRE — relative จากราก repo automation
+  # schema: <module>: { dir: <path relative จาก automation.path>, prefix: TC-<AREA> }
+  # ⚠️ ต้องเป็น {dir, prefix} ทุกตัว — /gen-batch อ่าน prefix เพื่อตั้งเลข TC-ID ต่อ และเขียน entry ใหม่กลับเข้ามาเอง
+  areas:
+    # นำร่องโมดูลแรก: checkout — โฟลว์ที่ถูกแก้บ่อยสุดและมีกติกาเงินเยอะ
+    #   FE src/contexts/checkout + src/components/pages/checkout (ยอดรวม/ค่าส่ง/ค่าธรรมเนียมบัตร
+    #      มาจาก ERP /total-payment เป็น authoritative — ห้ามคำนวณซ้ำฝั่ง client)
+    #   BE erp/ (total-payment, order) + web/ (OrderController, InformPaymentController)
+    checkout: { dir: wre_checkout_robot/tests, prefix: TC-CHK, planned: true }   # ยังไม่ scaffold (repo automation ยังว่าง)
+    # โมดูลถัดไป: ให้ /module-scout ออกทะเบียนก่อน แล้ว /gen-batch เติม entry ตรงนี้เอง
+
+# ─────────────────────────────────────────────────────────────────────
+# discovery — บอก /module-scout ว่า "module ของ stack นี้อยู่ตรงไหน" (portable, ไม่มี path เครื่อง)
+# ยืนยันแล้ว 2026-08-26: FE src/app/* = 27 route · BE Laravel monorepo 4 app
+#   (web 42 Controller · erp 16 · backoffice 18 · migrate_api 3)
+# ─────────────────────────────────────────────────────────────────────
+discovery:
+  modules:
+    - { side: fe, root_match: frontend, glob: "src/app/*", name_from: dirname }
+    - { side: be, root_match: backend,  glob: "*/app/Http/Controllers/*Controller.php",
+        name_from: basename, strip_suffix: "Controller.php", label_with_parent: true }
+  pair_by: route                # ชื่อไม่ตรงกัน — ไล่จาก fetch()/axios ใน FE → routes/api.php ของ BE app นั้น
+  # exclude = "ไม่ใช่ฟีเจอร์" เท่านั้น · หน้า content นิ่ง (about-us/privacy-policy/q-n-a) ให้ mark risk: skip ในทะเบียน
+  exclude: ["[...slug]", theme, sample, Controller.php, Base.php]
+  notes: >
+    BE เป็น monorepo 4 app — ชื่อ Controller ซ้ำข้าม app ได้ (OrderController มีทั้ง web และ erp)
+    ต้องใส่ชื่อ app กำกับเสมอ (label_with_parent) · FE 1 หน้ายิงได้หลาย controller → be เป็น list ได้
+
+# เอกสาร spec: WRE ไม่มีโฟลเดอร์ docs/ ทางการ — ของที่ใกล้ requirement ที่สุดคือ
+#   frontend/.cursor/prp/*.prp.md + .cursor/plans/*.md (coupon, CWV product-detail/category/service-location)
+#   backend/.cursor/prp/task-wre-control-product.prp.md
+#   wre/structure_data/, breadcrumb-fix-stg-test-report-*.md (รายงานเทส staging)
+# path จริงตั้งใน wre.local.yaml → sources.specs
+
+# Next.js (.ts/.tsx) + Laravel (.php); .json สำหรับ config อย่าง wp-page-redirect-data.json
+include_ext: [.ts, .tsx, .js, .jsx, .php]
+ignore_dirs: [node_modules, .git, vendor, dist, build, .next, out, coverage, storage,
+              bootstrap, public, uploads, __pycache__, .cache, migrations, initdb, docker]
+ignore_globs: ["*.env*", "*.lock", "*.min.*", "*.map", "*.log", "*.d.ts", "*.spec.*",
+               "*.test.*", "_ide_helper.php", "*.blade.php"]
+
+# โฟลเดอร์ที่มักมีกติกาให้ทดสอบ
+#   โครง Laravel: app/Http/{Controllers,Requests,Middleware}, Models, Services, Rules, Policies, routes
+#   โครง Next:    app, api, components, contexts, hooks, store, utils/validation
+signal_dirs: [Controllers, Requests, Models, Services, Rules, Policies, Middleware, routes,
+              app, api, components, contexts, hooks, store, utils, validation, interface]
+
+max_files: 25
+max_total_chars: 120000
