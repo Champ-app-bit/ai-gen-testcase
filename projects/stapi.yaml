@@ -22,6 +22,7 @@ automation:
     legacy-empty: { dir: legacy-empty_robot/tests, prefix: TC-LGE }
     legacy-menu: { dir: legacy-menu_robot/tests, prefix: TC-LGM }
     legacy-product-page: { dir: legacy-product-page_robot/tests, prefix: TC-LPP }
+    legacy-root: { dir: legacy-root_robot/tests, prefix: TC-LGR }
 
 # ─────────────────────────────────────────────────────────────────────
 # discovery — บอก /module-scout ว่า "module ของ stack นี้อยู่ตรงไหน"
