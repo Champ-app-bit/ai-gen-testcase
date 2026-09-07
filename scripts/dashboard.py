@@ -9,7 +9,7 @@ log, results/*/output.xml) อยู่ในดิสก์ local — หน้
 ความปลอดภัย: bind 127.0.0.1 เท่านั้น · ไม่มี endpoint ที่เขียนอะไร · ไม่ส่งค่า env
 หรือเนื้อไฟล์ config ออกไป (เฉพาะ path กับตัวเลขสถานะ)
 """
-import argparse, json, re, sys, threading, time
+import argparse, json, os, re, sys, threading, time
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -75,6 +75,31 @@ def log_tail(path, n=60):
         return []
 
 
+# โฟลเดอร์ที่ห้ามเดินลงไปเด็ดขาด — ใช้เมื่อ config ไม่ได้ตั้ง ignore_dirs
+# (ก่อนหน้านี้โค้ดกรองด้วยชื่อ repo ของ project erp แบบ hardcode จึงใช้กับ project อื่นไม่ได้
+#  ผลคือ /api/state เดิน node_modules ~160k ไฟล์ต่อคำขอ แล้วไม่ตอบเลย — dashboard ค้าง)
+_SKIP_DIRS_FALLBACK = {
+    ".git", ".hg", ".svn", ".cache", ".next", ".nuxt", ".strapi", ".tmp", ".turbo",
+    ".vercel", ".venv", "__pycache__", "build", "coverage", "dist", "node_modules",
+    "out", "storage", "target", "vendor", "venv",
+}
+
+# เพดานกันแขวน: ต่อให้ config เพี้ยน คำขอเดียวต้องไม่เดินเกินนี้
+_WALK_FILE_BUDGET = 40000
+_WALK_TIME_BUDGET = 3.0  # วินาที
+
+
+def _skip_dirs(cfg):
+    d = set(_SKIP_DIRS_FALLBACK)
+    for name in (cfg.get("ignore_dirs") or []):
+        n = str(name).strip()
+        if n:
+            d.add(n)
+    d.discard(".git")      # เติมกลับด้านล่างเสมอ ไม่ให้ config ถอดออกได้
+    d.add(".git")
+    return d
+
+
 def recent_writes(cfg, minutes=15, limit=14):
     roots = [Path(p) for p in cfg.get("sources", {}).get("code", [])]
     roots.append(automation_root(cfg))
@@ -83,28 +108,49 @@ def recent_writes(cfg, minutes=15, limit=14):
         for kk in ("dir", "draft_dir", "confirmed_dir"):
             if b.get(kk):
                 roots.append(Path(b[kk]))
+
+    skip = _skip_dirs(cfg)
     cut, out = time.time() - minutes * 60, []
     seen = set()
-    for r in roots:
-        rr = str(r.resolve()) if r.exists() else str(r)
-        if rr in seen or not r.is_dir():
+    scanned = 0
+    deadline = time.monotonic() + _WALK_TIME_BUDGET
+    truncated = False
+
+    for r in sorted(roots, key=lambda x: len(str(x))):
+        if not r.is_dir():
+            continue
+        rr = str(r.resolve())
+        # ข้าม root ที่ซ้ำ และ root ที่ซ้อนอยู่ใต้ root ที่เดินไปแล้ว
+        # (batch.dir / behavior_spec อยู่ใต้ automation_root → เดินซ้ำ = รายการซ้ำ)
+        if any(rr == s0 or rr.startswith(s0 + os.sep) for s0 in seen):
             continue
         seen.add(rr)
-        # ไม่เดินลึกทั้ง repo product (ใหญ่มาก) — สนใจเฉพาะที่ระบบเขียนได้
-        if any(str(r).endswith(s) for s in ("erp-frontend-2026", "erp-api-2025")):
-            continue
-        for p in r.rglob("*"):
-            if ".git" in p.parts or not p.is_file():
-                continue
-            try:
-                m = p.stat().st_mtime
-            except OSError:
-                continue
-            if m >= cut:
-                out.append({"t": datetime.fromtimestamp(m).strftime("%H:%M:%S"),
-                            "p": str(p), "mt": m})
+
+        # os.walk + ตัด dirnames ทิ้ง = ไม่เดินลง node_modules เลย (rglob ตัดไม่ได้)
+        for dirpath, dirnames, filenames in os.walk(rr, followlinks=False):
+            dirnames[:] = [d for d in dirnames if d not in skip and not d.startswith(".")]
+            if scanned >= _WALK_FILE_BUDGET or time.monotonic() > deadline:
+                truncated = True
+                dirnames[:] = []
+                break
+            for fn in filenames:
+                scanned += 1
+                fp = os.path.join(dirpath, fn)
+                try:
+                    m = os.stat(fp).st_mtime
+                except OSError:
+                    continue
+                if m >= cut:
+                    out.append({"t": datetime.fromtimestamp(m).strftime("%H:%M:%S"),
+                                "p": fp, "mt": m})
+        if truncated:
+            break
+
     out.sort(key=lambda x: -x["mt"])
-    return out[:limit]
+    res = out[:limit]
+    if truncated and res:
+        res[-1] = dict(res[-1], truncated=True)
+    return res
 
 
 def registry(cfg):

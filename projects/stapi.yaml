@@ -19,6 +19,9 @@ automation:
     legacy-post: { dir: legacy-post_robot/tests, prefix: TC-LGP }
     legacy-service-location: { dir: legacy-service-location_robot/tests, prefix: TC-LSL }
     legacy-banner: { dir: legacy-banner_robot/tests, prefix: TC-LGB }
+    legacy-empty: { dir: legacy-empty_robot/tests, prefix: TC-LGE }
+    legacy-menu: { dir: legacy-menu_robot/tests, prefix: TC-LGM }
+    legacy-product-page: { dir: legacy-product-page_robot/tests, prefix: TC-LPP }
 
 # ─────────────────────────────────────────────────────────────────────
 # discovery — บอก /module-scout ว่า "module ของ stack นี้อยู่ตรงไหน"
